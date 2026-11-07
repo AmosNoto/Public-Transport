@@ -1,0 +1,41 @@
+{
+  "name": "afterglow",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A live, glowing map of the world's public transit.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "concurrently -k -n server,client -c cyan,magenta \"npm:dev:server\" \"npm:dev:client\"",
+    "dev:server": "tsx watch --clear-screen=false server/src/index.ts",
+    "dev:client": "vite",
+    "build": "vite build",
+    "start": "NODE_ENV=production tsx server/src/index.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@fastify/compress": "^9.3.0",
+    "@fastify/static": "^10.1.10",
+    "@fastify/websocket": "^11.3.7",
+    "@mapbox/vector-tile": "^3.0.0",
+    "dotenv": "^18.0.9",
+    "earcut": "^3.2.4",
+    "fastify": "^5.12.8",
+    "fflate": "^0.8.3",
+    "gtfs-realtime-bindings": "^2.2.0",
+    "pbf": "^5.1.2",
+    "three": "^0.187.0"
+  },
+  "devDependencies": {
+    "@types/earcut": "^3.0.0",
+    "@types/node": "^26.6.6",
+    "@types/three": "^0.187.0",
+    "@types/ws": "^8.18.2",
+    "concurrently": "^10.0.7",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.6"
+  }
+}
