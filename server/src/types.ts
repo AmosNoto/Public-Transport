@@ -2,23 +2,39 @@
 
 export type Mode = 'subway' | 'rail' | 'bus' | 'tram';
 
+/** Where a feed's live positions come from. */
+export type RealtimeDef =
+  | { kind: 'gtfs-rt'; url: string; headers?: Record<string, string>; minIntervalS?: number }
+  | { kind: 'hsl-mqtt'; url: string; topic: string };
+
+export interface FeedFilter {
+  /** Keep only shapes (and so routes and trips) that pass through this box: [minLon, minLat, maxLon, maxLat]. */
+  bbox?: [number, number, number, number];
+  /** Keep only routes of these GTFS route_type values. */
+  routeTypes?: number[];
+}
+
 export interface FeedDef {
   id: string;
   agency: string;
   /** GTFS static zip. */
   static: string;
-  /** GTFS-Realtime VehiclePositions endpoint. */
-  vehicles?: string;
-  headers?: Record<string, string>;
-  /** Minimum seconds between realtime polls for this feed. */
-  minIntervalS?: number;
+  staticHeaders?: Record<string, string>;
+  /** Live positions; absent means the feed is shown from its timetable. */
+  realtime?: RealtimeDef;
+  filter?: FeedFilter;
   license: { name: string; url?: string };
   attribution: string;
+  /** Wording the publisher requires to be displayed with the data. */
+  legend?: string;
+  /** Why there's no realtime, shown in diagnostics (e.g. "needs ONEBUSAWAY_KEY"). */
+  note?: string;
 }
 
 export interface CityDef {
   id: string;
   name: string;
+  country: string;
   tz: string;
   /** Point everything in the city is stored relative to. */
   origin: { lon: number; lat: number };
@@ -66,7 +82,7 @@ export interface VehicleFix {
   stopped?: boolean;
 }
 
-export type FeedState = 'starting' | 'ok' | 'stale' | 'empty' | 'http-error' | 'decode-error' | 'network-error' | 'no-key';
+export type FeedState = 'starting' | 'ok' | 'stale' | 'empty' | 'http-error' | 'decode-error' | 'network-error' | 'no-key' | 'timetable';
 
 export interface FeedHealth {
   feed: string;

@@ -1,0 +1,13 @@
+services:
+  afterglow:
+    build: .
+    ports:
+      - "8787:8787"
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - afterglow-data:/data
+    restart: unless-stopped
+volumes:
+  afterglow-data:

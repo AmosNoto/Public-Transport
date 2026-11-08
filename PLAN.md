@@ -107,3 +107,9 @@ The repo will always have one-command `npm run dev` (server + client), `README.m
 1. **First city:** Boston (recommended, for the reasons above) or Helsinki (beautiful, high-frequency data, but MQTT-only, so a less typical path).
 2. **Stack:** OK with Three.js + custom shaders rather than a map library?
 3. **Light theme direction:** the "ink on paper" idea above OK to prototype?
+
+## Status
+
+- **Milestone 1 — one city, end to end:** done (Boston): live and scheduled vehicles, GPU motion, photons, selective bloom.
+- **Milestone 2 — globe + several cities:** done. One continuous globe-to-map camera, real day/night, city glows, tiled water basemap, searchable city switcher. Cities: Boston, Toronto (+ scheduled subway), Seattle (+ live Link), Brisbane, Helsinki (MQTT, ~1 Hz), Amsterdam (national OVapi feed, Amsterdam area), Oslo (scheduled; Ruter publishes no open positions). All keyless; licences verified per feed. Streaming GTFS processing with a disk cache handles national feeds.
+- Next: milestone 3 (global catalog discovery, finer region streaming, KEYS.md for keyed feeds), then milestone 4 (time-lapse, auto-tour, themes, interactive mode).

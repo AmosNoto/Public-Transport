@@ -14,22 +14,32 @@
   <div id="fallback" hidden><p>Afterglow needs WebGL 2, which this browser doesn't provide.</p></div>
 
   <header class="hud tl">
-    <h1 id="city-name">Afterglow</h1>
+    <button id="city-btn" class="city-btn" aria-haspopup="listbox" aria-expanded="false" aria-controls="switcher">
+      <h1 id="city-name">Earth</h1>
+      <svg viewBox="0 0 12 12" aria-hidden="true"><path d="m3 4.5 3 3 3-3"/></svg>
+    </button>
     <p class="mono" id="city-time">--:--</p>
+    <div id="switcher" class="panel" hidden>
+      <input id="city-search" type="search" placeholder="Find a city" autocomplete="off" spellcheck="false" aria-label="Find a city">
+      <ul id="city-list" role="listbox" aria-label="Cities"></ul>
+    </div>
   </header>
 
   <section class="hud bl" aria-live="off">
-    <p class="eyebrow">In motion</p>
+    <p class="eyebrow" id="count-label">Moving worldwide</p>
     <p class="count"><span class="mono big" id="count-city">0</span></p>
     <p class="mono small" id="count-sched" hidden></p>
-    <p class="mono small">worldwide <span id="count-world">0</span></p>
+    <p class="mono small" id="count-world-row" hidden>worldwide <span id="count-world">0</span></p>
   </section>
 
   <nav class="hud br">
-    <div id="modes" class="modes" role="group" aria-label="Transport modes"></div>
-    <button id="credits-btn" class="mode on" aria-label="Data sources and credits" title="Data sources and credits">
-      <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7"/><path d="M10 9v5M10 6.5v.1"/></svg>
-    </button>
+    <p id="legend" class="legend" hidden></p>
+    <div class="row">
+      <div id="modes" class="modes" role="group" aria-label="Transport modes"></div>
+      <button id="credits-btn" class="mode on" aria-label="Data sources and credits" title="Data sources and credits">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7"/><path d="M10 9v5M10 6.5v.1"/></svg>
+      </button>
+    </div>
     <div id="credits" class="panel" hidden>
       <p class="eyebrow">Data</p>
       <ul id="credits-list"></ul>

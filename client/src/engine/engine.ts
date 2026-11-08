@@ -6,32 +6,57 @@
 // light scene can ever bloom.
 
 import * as THREE from 'three';
-import { MapControls } from 'three/addons/controls/MapControls.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { TIERS, FrameGovernor, detectDevice, initialTier, type DeviceInfo, type Tier } from './quality.ts';
+import { GlobeCamera, type View } from './camera.ts';
+import { R, subsolar } from './geo.ts';
 
 // Colours are authored as display values and blended as-is, exactly like the lens (three r128
 // without colour management). Additive light in that space is what gives the lens its look.
 THREE.ColorManagement.enabled = false;
 
-const R = 6371008.8;
-
+/** Uniforms every layer shares (same objects, so one update reaches all materials). */
 export interface SharedUniforms {
   uScale: { value: number };
-  uOff: { value: THREE.Vector2 };
+  uLatC: { value: THREE.Vector2 };
+  uLonC: { value: number };
+  uMorph: { value: number };
+  uCam: { value: THREE.Vector3 };
   uTime: { value: number };
   uRes: { value: THREE.Vector2 };
   uDpr: { value: number };
+  uSun: { value: THREE.Vector2 };
+  uDayNight: { value: number };
+}
+
+/** Per-layer placement relative to the focus (see layerOffsets in geo.ts). */
+export interface LayerUniforms {
+  uDLon: { value: number };
+  uM0: { value: number };
+  uOff: { value: THREE.Vector2 };
+}
+
+/** Per-city fade (globe glow ↔ detailed city) and brightness (night boost, activity). */
+export interface CityUniforms {
+  uAlpha: { value: number };
+  uBoost: { value: number };
+}
+
+export function layerUniforms(): LayerUniforms {
+  return { uDLon: { value: 0 }, uM0: { value: 0 }, uOff: { value: new THREE.Vector2() } };
 }
 
 export const PALETTE = {
-  dark: { land: new THREE.Color('#0b1016'), water: new THREE.Color('#06090d') },
+  dark: {
+    space: new THREE.Color('#090d12'),
+    landDay: new THREE.Color('#0e151d'), landNight: new THREE.Color('#080b10'),
+    waterDay: new THREE.Color('#070a0f'), waterNight: new THREE.Color('#030407'),
+  },
 };
 
 export class Engine {
   readonly renderer: THREE.WebGLRenderer;
-  readonly camera: THREE.PerspectiveCamera;
-  readonly controls: MapControls;
+  readonly globe: GlobeCamera;
   readonly base = new THREE.Scene();
   readonly light = new THREE.Scene();
   readonly uniforms: SharedUniforms;
@@ -48,9 +73,7 @@ export class Engine {
   private governor: FrameGovernor;
   private lastFrame = 0;
   private hooks: ((dt: number, now: number) => void)[] = [];
-  focus = { lon: 0, lat: 0 };
-
-  constructor(readonly canvas: HTMLCanvasElement) {
+  constructor(readonly canvas: HTMLCanvasElement, initialView: View) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance', alpha: false });
     this.renderer.outputColorSpace = THREE.LinearSRGBColorSpace; // colours are authored as display values, like the lens
     this.device = detectDevice(this.renderer.getContext() as WebGL2RenderingContext);
@@ -58,25 +81,21 @@ export class Engine {
     this.tier = TIERS[t0];
     this.governor = new FrameGovernor(t0, Math.min(3, t0 + 1), (t) => { this.tier = TIERS[t]; this.resize(); });
 
-    this.camera = new THREE.PerspectiveCamera(35, 1, 10, 1e7);
-    this.camera.position.set(0, 30000, 9000);
-    this.controls = new MapControls(this.camera, canvas);
-    this.controls.enableDamping = true;
-    this.controls.dampingFactor = 0.08;
-    this.controls.screenSpacePanning = false;
-    this.controls.zoomToCursor = true;
-    this.controls.minDistance = 250;
-    this.controls.maxDistance = 400000;
-    this.controls.maxPolarAngle = 1.05;
+    this.globe = new GlobeCamera(canvas, initialView, this.device.reducedMotion);
 
     this.uniforms = {
       uScale: { value: R },
-      uOff: { value: new THREE.Vector2() },
+      uLatC: { value: new THREE.Vector2(0, 1) },
+      uLonC: { value: 0 },
+      uMorph: { value: 0 },
+      uCam: { value: new THREE.Vector3() },
       uTime: { value: 0 },
       uRes: { value: new THREE.Vector2(1, 1) },
       uDpr: { value: 1 },
+      uSun: { value: new THREE.Vector2() },
+      uDayNight: { value: 1 },
     };
-    this.base.background = PALETTE.dark.land;
+    this.base.background = PALETTE.dark.space;
 
     // Resolve: light accumulates in HDR (so overlaps never clip early), then is compressed to
     // the 0–1 range the lens's 8-bit bloom buffer had. Overflow spills into all channels, so
@@ -136,29 +155,31 @@ export class Engine {
     this.lightRT.setSize(W, H);
     this.resolveRT.setSize(W, H);
     this.bloom.setSize(Math.round(W * this.tier.bloomScale), Math.round(H * this.tier.bloomScale));
-    this.camera.aspect = w / h;
-    this.camera.updateProjectionMatrix();
+    this.globe.apply();
     this.uniforms.uRes.value.set(W, H);
     this.uniforms.uDpr.value = dpr;
   }
 
-  /** Put the world origin at (lon, lat); geometry is placed relative to it in metres. */
-  setFocus(lon: number, lat: number) {
-    this.focus = { lon, lat };
-    this.uniforms.uScale.value = R * Math.cos((lat * Math.PI) / 180);
-  }
-
-  /** Offset (metres) of a city origin from the focus, in double precision. */
-  offsetOf(origin: { lon: number; lat: number }): THREE.Vector2 {
-    const s = this.uniforms.uScale.value;
-    const my = (lat: number) => Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI) / 360));
-    return new THREE.Vector2(((origin.lon - this.focus.lon) * Math.PI) / 180 * s, (my(origin.lat) - my(this.focus.lat)) * s);
-  }
+  get camera() { return this.globe.camera; }
 
   /** Metres covered by one CSS pixel at the view centre. */
-  metresPerPixel(): number {
-    const dist = this.camera.position.distanceTo(this.controls.target);
-    return (2 * dist * Math.tan((this.camera.fov * Math.PI) / 360)) / (this.canvas.clientHeight || innerHeight);
+  metresPerPixel(): number { return this.globe.metresPerPixel(); }
+
+  private sunAt = 0;
+  /** Push camera and sun state into the shared uniforms. */
+  private syncUniforms() {
+    const g = this.globe, f = g.focus, u = this.uniforms;
+    u.uScale.value = f.scale;
+    u.uLatC.value.set(f.sinLat, f.cosLat);
+    u.uLonC.value = f.lon;
+    u.uMorph.value = g.morph;
+    u.uCam.value.copy(g.camera.position);
+    const now = Date.now();
+    if (now - this.sunAt > 10_000) {
+      const s = subsolar(new Date(now));
+      u.uSun.value.set(s.lat, s.lon);
+      this.sunAt = now;
+    }
   }
 
   onFrame(fn: (dt: number, now: number) => void) { this.hooks.push(fn); }
@@ -189,11 +210,8 @@ export class Engine {
         this.stats.frameMs += (raw * 1000 - this.stats.frameMs) * 0.1;
         this.stats.fps = 1000 / this.stats.frameMs;
       }
-      this.controls.update();
-      const dist = this.camera.position.distanceTo(this.controls.target);
-      this.camera.near = Math.max(1, dist * 0.02);
-      this.camera.far = dist * 40;
-      this.camera.updateProjectionMatrix();
+      this.globe.update(dt);
+      this.syncUniforms();
       for (const h of this.hooks) h(dt, now);
       this.draw(dt);
     };

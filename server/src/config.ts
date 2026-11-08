@@ -9,7 +9,7 @@ export const config = {
   cacheDir: path.resolve(root, process.env.CACHE_DIR ?? './data/cache'),
   pollIntervalS: Math.max(5, Number(process.env.POLL_INTERVAL_S ?? 10)),
   userAgent: `Afterglow/0.1 (live transit visualisation${process.env.USER_AGENT_CONTACT ? '; ' + process.env.USER_AGENT_CONTACT : ''})`,
-  production: process.env.NODE_ENV === 'production',
+  production: process.env.NODE_ENV === 'production' || process.argv.includes('--production'),
   /** Read an API key from the environment; undefined when not configured. */
   key(name: string): string | undefined {
     const v = process.env[name];

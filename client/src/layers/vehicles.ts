@@ -6,7 +6,7 @@
 
 import * as THREE from 'three';
 import { COMMON, ROUTES, SHAPES, quadCorners } from '../engine/glsl.ts';
-import type { SharedUniforms } from '../engine/engine.ts';
+import type { SharedUniforms, LayerUniforms, CityUniforms } from '../engine/engine.ts';
 import type { CityData } from '../data/city.ts';
 
 /** Seconds of extrapolation beyond a fix before a dot waits for the next one. */
@@ -61,20 +61,20 @@ export class Vehicles {
   private aC!: THREE.InstancedBufferAttribute; // rx, ry, route, flags
   private count = 0;
 
-  constructor(private city: CityData, u: SharedUniforms, off: THREE.Vector2, routeTex: THREE.Texture) {
+  constructor(private city: CityData, u: SharedUniforms, lu: LayerUniforms, cu: CityUniforms, routeTex: THREE.Texture) {
     const q = quadCorners();
     this.geo.setAttribute('position', new THREE.BufferAttribute(q.position, 3));
     this.geo.setIndex(q.index);
     this.grow(2048);
     const mat = new THREE.ShaderMaterial({
       uniforms: {
-        ...u, uOff: { value: off }, uRouteTex: { value: routeTex },
-        uShapePts: { value: city.shapePts }, uShapeTab: { value: city.shapeTab }, uSize: { value: 11 },
+        ...u, ...lu, ...cu, uRouteTex: { value: routeTex },
+        uShapePts: { value: city.shapePts }, uShapeTab: { value: city.shapeTab }, uSize: { value: 11 }, uGain: { value: 1 },
       },
       transparent: true, side: THREE.DoubleSide, depthTest: false, depthWrite: false, blending: THREE.AdditiveBlending,
       vertexShader: COMMON + ROUTES + SHAPES + /* glsl */ `
         attribute vec4 aA; attribute vec4 aB; attribute vec4 aC;
-        uniform float uSize;
+        uniform float uSize, uGain, uAlpha, uBoost;
         varying vec2 vUv; varying vec3 vColor; varying float vSched;
         const float HORIZON = ${HORIZON.toFixed(1)}, EASE = ${EASE.toFixed(1)}, HOLD_MAX = ${HOLD_MAX.toFixed(1)};
         void main() {
@@ -95,8 +95,9 @@ export class Vehicles {
           float on = rs.a > 0.0 ? 1.0 : 0.0;
           // Scheduled vehicles: dimmer and closer to the route colour, drawn as hollow rings.
           vSched = aC.w >= 4.0 ? 1.0 : 0.0;
-          vColor = (vSched > 0.5 ? rs.rgb * 0.8 : mix(rs.rgb, vec3(1.0), 0.45) * 1.25) * alpha * on;
           vec4 c = clipOf(rel);
+          alpha *= gVis * uAlpha * uGain;
+          vColor = (vSched > 0.5 ? rs.rgb * 0.8 : mix(rs.rgb, vec3(1.0), 0.45) * 1.25) * alpha * on * uBoost;
           vec2 corner = position.xy * vec2(2.0, 1.0) - vec2(1.0, 0.0);
           vUv = corner;
           c.xy += corner * uSize * uDpr * 0.5 / (uRes * 0.5) * c.w;
@@ -214,5 +215,10 @@ export class Vehicles {
     return { perRoute, perShape, total, scheduled };
   }
 
-  setSize(px: number) { (this.mesh.material as THREE.ShaderMaterial).uniforms.uSize.value = px; }
+  /** Zoomed out, hundreds of dots share a few pixels: shrink and dim them so a city stays light, not glare. */
+  setZoom(metresPerPixel: number) {
+    const u = (this.mesh.material as THREE.ShaderMaterial).uniforms;
+    u.uSize.value = 11 * Math.min(1, Math.max(0.36, Math.pow(8 / metresPerPixel, 0.35)));
+    u.uGain.value = Math.min(1, Math.max(0.12, Math.pow(30 / metresPerPixel, 0.5)));
+  }
 }

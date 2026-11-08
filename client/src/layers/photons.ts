@@ -5,7 +5,7 @@
 
 import * as THREE from 'three';
 import { COMMON, ROUTES, SHAPES, quadCorners } from '../engine/glsl.ts';
-import type { SharedUniforms } from '../engine/engine.ts';
+import type { SharedUniforms, LayerUniforms, CityUniforms } from '../engine/engine.ts';
 import type { CityData } from '../data/city.ts';
 
 const PHI = 0.6180339887;
@@ -17,7 +17,7 @@ export class Photons {
   /** Distance (m) photons have travelled; advanced at a constant on-screen speed. */
   private clock = 0;
 
-  constructor(private city: CityData, u: SharedUniforms, off: THREE.Vector2, routeTex: THREE.Texture) {
+  constructor(private city: CityData, u: SharedUniforms, lu: LayerUniforms, cu: CityUniforms, routeTex: THREE.Texture) {
     const q = quadCorners();
     this.geo.setAttribute('position', new THREE.BufferAttribute(q.position, 3));
     this.geo.setIndex(q.index);
@@ -25,14 +25,14 @@ export class Photons {
     this.geo.instanceCount = 0;
     this.mat = new THREE.ShaderMaterial({
       uniforms: {
-        ...u, uOff: { value: off }, uRouteTex: { value: routeTex },
+        ...u, ...lu, ...cu, uRouteTex: { value: routeTex },
         uShapePts: { value: city.shapePts }, uShapeTab: { value: city.shapeTab },
-        uClock: { value: 0 }, uSize: { value: 5 },
+        uClock: { value: 0 }, uSize: { value: 5 }, uZoomFade: { value: 1 },
       },
       transparent: true, side: THREE.DoubleSide, depthTest: false, depthWrite: false, blending: THREE.AdditiveBlending,
       vertexShader: COMMON + ROUTES + SHAPES + /* glsl */ `
         attribute vec4 ph; // shape, phase 0–1, brightness, speed factor
-        uniform float uClock, uSize;
+        uniform float uClock, uSize, uAlpha, uBoost, uZoomFade;
         varying vec2 vUv; varying vec3 vColor;
         void main() {
           vec4 info = shapeInfo(ph.x);
@@ -41,8 +41,9 @@ export class Photons {
           float d = mod(ph.y * L + uClock * ph.w, L);
           // Fade in and out at the ends of the line so the wrap never pops.
           float edge = smoothstep(0.0, 120.0, d) * smoothstep(0.0, 120.0, L - d);
-          vColor = rs.rgb * rs.a * ph.z * edge;
           vec4 c = clipOf(shapeAt(info, d));
+          edge *= gVis * uAlpha * uZoomFade;
+          vColor = rs.rgb * rs.a * ph.z * edge * uBoost;
           vec2 corner = position.xy * vec2(2.0, 1.0) - vec2(1.0, 0.0);
           vUv = corner;
           c.xy += corner * uSize * uDpr * 0.5 / (uRes * 0.5) * c.w;
@@ -93,6 +94,9 @@ export class Photons {
 
   /** Advance at a constant speed in screen pixels per second, whatever the zoom. */
   tick(dt: number, metresPerPixel: number, reducedMotion: boolean) {
+    // Photons are detail: they fade out as the city shrinks to a few pixels.
+    const z = Math.min(1, Math.max(0, (220 - metresPerPixel) / 160));
+    this.mat.uniforms.uZoomFade.value = z * z * (3 - 2 * z);
     if (reducedMotion) return;
     this.clock = (this.clock + dt * 70 * metresPerPixel) % 1e7;
     this.mat.uniforms.uClock.value = this.clock;

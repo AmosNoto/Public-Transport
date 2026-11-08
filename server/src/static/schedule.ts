@@ -1,13 +1,10 @@
 // Scheduled vehicles from GTFS static: where each trip should be right now according to the
 // timetable. Used for a feed only when it has no usable live positions.
 
-import path from 'node:path';
 import fs from 'node:fs/promises';
-import { Unzip, UnzipInflate, unzipSync, strFromU8 } from 'fflate';
-import { config } from '../config.ts';
-import { readCsv } from './csv.ts';
+import { zipCsv, zipRows, type Row } from './csv.ts';
 import { projectOnto } from '../geo.ts';
-import type { CityIndex } from './gtfs.ts';
+import { staticZipPath, type CityIndex } from './gtfs.ts';
 import type { FeedDef } from '../types.ts';
 
 export interface ScheduledTrip {
@@ -73,54 +70,12 @@ const hms = (s: string) => {
   return m ? +m[1] * 3600 + +m[2] * 60 + +m[3] : NaN;
 };
 
-function splitLine(line: string): string[] {
-  if (line.indexOf('"') < 0) return line.split(',');
-  const out: string[] = [];
-  let f = '', q = false;
-  for (let i = 0; i < line.length; i++) {
-    const c = line[i];
-    if (q) { if (c === '"') { if (line[i + 1] === '"') { f += '"'; i++; } else q = false; } else f += c; }
-    else if (c === '"') q = true;
-    else if (c === ',') { out.push(f); f = ''; }
-    else f += c;
-  }
-  out.push(f);
-  return out;
-}
-
-/** Stream one CSV file out of a zip without materialising it as a single string. */
-function streamCsv(zip: Uint8Array, name: string, onHeader: (h: string[]) => void, onRow: (f: string[]) => void) {
-  const uz = new Unzip();
-  uz.register(UnzipInflate);
-  uz.onfile = (file) => {
-    if (path.basename(file.name) !== name) return;
-    const dec = new TextDecoder();
-    let carry = '', header = false;
-    const lines = (text: string) => {
-      const parts = (carry + text).split('\n');
-      carry = parts.pop() ?? '';
-      for (let line of parts) {
-        if (line.endsWith('\r')) line = line.slice(0, -1);
-        if (!header) { onHeader(splitLine(line.replace(/^﻿/, '')).map((h) => h.trim())); header = true; continue; }
-        if (line) onRow(splitLine(line));
-      }
-    };
-    file.ondata = (err, chunk, final) => {
-      if (err) throw err;
-      lines(dec.decode(chunk, { stream: !final }));
-      if (final && carry) { const c = carry; carry = ''; lines(c + '\n'); }
-    };
-    file.start();
-  };
-  uz.push(zip, true);
-}
-
-function activeServices(cal: string, dates: string, date: string): Set<string> {
+function activeServices(cal: Row[], dates: Row[], date: string): Set<string> {
   const dow = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'][
     new Date(Date.UTC(+date.slice(0, 4), +date.slice(4, 6) - 1, +date.slice(6, 8))).getUTCDay()];
   const on = new Set<string>();
-  for (const r of readCsv(cal)) if (r[dow] === '1' && r.start_date <= date && date <= r.end_date) on.add(r.service_id);
-  for (const r of readCsv(dates)) {
+  for (const r of cal) if (r[dow] === '1' && r.start_date <= date && date <= r.end_date) on.add(r.service_id);
+  for (const r of dates) {
     if (r.date !== date) continue;
     if (r.exception_type === '1') on.add(r.service_id);
     else if (r.exception_type === '2') on.delete(r.service_id);
@@ -133,34 +88,37 @@ export async function buildSchedule(ix: CityIndex, feed: FeedDef, nowS = Date.no
   const t0 = Date.now();
   const tz = ix.def.tz;
   const today = localDate(nowS, tz), yesterday = shiftDate(today, -1);
-  const zip = new Uint8Array(await fs.readFile(path.join(config.cacheDir, 'static', ix.def.id, `${feed.id}.zip`)));
-  const small = unzipSync(zip, { filter: (f) => ['calendar.txt', 'calendar_dates.txt', 'trips.txt', 'stops.txt'].includes(path.basename(f.name)) });
-  const get = (n: string) => { const k = Object.keys(small).find((f) => path.basename(f) === n); return k ? strFromU8(small[k]) : ''; };
-  const cal = get('calendar.txt'), calDates = get('calendar_dates.txt');
+  const zip = new Uint8Array(await fs.readFile(staticZipPath(ix.def.id, feed.id)));
+  const cal = zipRows(zip, 'calendar.txt'), calDates = zipRows(zip, 'calendar_dates.txt');
   const svcToday = activeServices(cal, calDates, today), svcYest = activeServices(cal, calDates, yesterday);
 
   // Trips that run today or yesterday and have a shape we can move them along.
   const want = new Map<string, { day: 0 | -1; route: number; shape: number; headsign?: string }>();
   const pending = new Map<string, { day: 0 | -1; route: number; shape: number; headsign?: string }>(); // ran yesterday too
-  for (const t of readCsv(get('trips.txt'))) {
-    const key = `${feed.id}:${t.trip_id}`;
+  let tT = -1, tS = -1, tH = -1;
+  zipCsv(zip, 'trips.txt', (col) => { tT = col('trip_id'); tS = col('service_id'); tH = col('trip_headsign'); }, (f) => {
+    const id = f[tT], key = `${feed.id}:${id}`;
     const shape = ix.tripShape.get(key), route = ix.tripRoute.get(key);
-    if (shape === undefined || route === undefined) continue;
-    const info = { route, shape, headsign: t.trip_headsign || undefined };
-    if (svcToday.has(t.service_id)) want.set(t.trip_id, { day: 0, ...info });
-    else if (svcYest.has(t.service_id)) want.set(t.trip_id, { day: -1, ...info });
-    if (svcToday.has(t.service_id) && svcYest.has(t.service_id)) pending.set(t.trip_id, { day: -1, ...info });
-  }
+    if (shape === undefined || route === undefined) return;
+    const svc = f[tS];
+    const info = { route, shape, headsign: (tH >= 0 && f[tH]) || undefined };
+    if (svcToday.has(svc)) want.set(id, { day: 0, ...info });
+    else if (svcYest.has(svc)) want.set(id, { day: -1, ...info });
+    if (svcToday.has(svc) && svcYest.has(svc)) pending.set(id, { day: -1, ...info });
+  });
 
   const stops = new Map<string, [number, number]>();
-  for (const s of readCsv(get('stops.txt'))) if (s.stop_lat && s.stop_lon) stops.set(s.stop_id, [+s.stop_lat, +s.stop_lon]);
+  let sI = -1, sLa = -1, sLo = -1;
+  zipCsv(zip, 'stops.txt', (col) => { sI = col('stop_id'); sLa = col('stop_lat'); sLo = col('stop_lon'); }, (f) => {
+    if (f[sLa] && f[sLo]) stops.set(f[sI], [+f[sLa], +f[sLo]]);
+  });
 
   // Stream stop_times, keeping only wanted trips.
   const rows = new Map<string, [number, number, number, string][]>();
   let iTrip = 0, iArr = 0, iDep = 0, iStop = 0, iSeq = 0;
-  streamCsv(zip, 'stop_times.txt', (h) => {
-    iTrip = h.indexOf('trip_id'); iArr = h.indexOf('arrival_time'); iDep = h.indexOf('departure_time');
-    iStop = h.indexOf('stop_id'); iSeq = h.indexOf('stop_sequence');
+  zipCsv(zip, 'stop_times.txt', (col) => {
+    iTrip = col('trip_id'); iArr = col('arrival_time'); iDep = col('departure_time');
+    iStop = col('stop_id'); iSeq = col('stop_sequence');
   }, (f) => {
     const id = f[iTrip];
     if (!want.has(id)) return;

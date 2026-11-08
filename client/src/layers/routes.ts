@@ -5,9 +5,9 @@
 
 import * as THREE from 'three';
 import { COMMON, ROUTES } from '../engine/glsl.ts';
-import type { SharedUniforms } from '../engine/engine.ts';
+import type { SharedUniforms, LayerUniforms, CityUniforms } from '../engine/engine.ts';
 
-export function routeLines(verts: Float32Array, chains: Uint32Array, u: SharedUniforms, off: THREE.Vector2, routeTex: THREE.Texture) {
+export function routeLines(verts: Float32Array, chains: Uint32Array, u: SharedUniforms, lu: LayerUniforms, cu: CityUniforms, routeTex: THREE.Texture) {
   let nv = 0, ni = 0;
   for (let c = 0; c < chains.length; c += 3) { nv += chains[c + 1] * 2; ni += (chains[c + 1] - 1) * 6; }
   const pos = new Float32Array(nv * 2), prev = new Float32Array(nv * 2), next = new Float32Array(nv * 2);
@@ -42,19 +42,20 @@ export function routeLines(verts: Float32Array, chains: Uint32Array, u: SharedUn
   g.setIndex(new THREE.BufferAttribute(index, 1));
 
   const mat = new THREE.ShaderMaterial({
-    uniforms: { ...u, uOff: { value: off }, uRouteTex: { value: routeTex }, uWidth: { value: 2.2 }, uGain: { value: 0.5 } },
+    uniforms: { ...u, ...lu, ...cu, uRouteTex: { value: routeTex }, uWidth: { value: 2.2 }, uGain: { value: 0.5 } },
     transparent: true, side: THREE.DoubleSide, depthTest: false, depthWrite: false, blending: THREE.AdditiveBlending,
     vertexShader: COMMON + ROUTES + /* glsl */ `
       attribute vec2 rel, prevRel, nextRel;
       attribute float side, route;
-      uniform float uWidth;
+      uniform float uWidth, uAlpha, uBoost;
       varying vec3 vColor;
       varying float vAcross;
       vec2 screenOf(vec4 c) { return c.xy / c.w * uRes * 0.5; }
       void main() {
         vec4 rs = routeState(route);
-        vColor = rs.rgb * rs.a;
         vec4 c = clipOf(rel);
+        float vis = gVis * uAlpha;
+        vColor = rs.rgb * rs.a * vis * uBoost;
         vec2 s = screenOf(c), sp = screenOf(clipOf(prevRel)), sn = screenOf(clipOf(nextRel));
         // Branch-free, division-safe directions (no NaN can reach a vertex).
         vec2 d0 = s - sp, d1 = sn - s;
@@ -71,7 +72,7 @@ export function routeLines(verts: Float32Array, chains: Uint32Array, u: SharedUn
         float halfW = uWidth * uDpr * 0.5 + 0.5;
         c.xy += n * side * halfW * miter / (uRes * 0.5) * c.w;
         vAcross = side;
-        gl_Position = rs.a > 0.0 ? c : vec4(2.0, 2.0, 2.0, 1.0);
+        gl_Position = rs.a * vis > 0.001 ? c : vec4(2.0, 2.0, 2.0, 1.0);
       }`,
     fragmentShader: /* glsl */ `
       uniform float uGain;

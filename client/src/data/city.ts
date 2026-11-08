@@ -11,18 +11,44 @@ export interface RouteInfo {
 }
 export interface ShapeInfo { id: string; route: number; start: number; count: number; length: number }
 
+export interface Credit { name: string; license: string; url?: string; legend?: string }
+
+/** A city as listed by /api/cities (available before its geometry is loaded). */
+export interface CityInfo {
+  id: string;
+  name: string;
+  country: string;
+  tz: string;
+  origin: { lon: number; lat: number };
+  bbox: [number, number, number, number] | null;
+  state: 'queued' | 'building' | 'ready' | 'error';
+  live: number;
+  scheduled: number;
+  attribution: Credit[];
+}
+
+export async function listCities(): Promise<CityInfo[]> {
+  const r = await fetch('/api/cities');
+  if (!r.ok) throw new Error(`cities: HTTP ${r.status}`);
+  return r.json();
+}
+
+export async function loadGlow(id: string): Promise<Float32Array> {
+  return new Float32Array(await bin(`/api/city/${id}/glow.bin`));
+}
+
 export interface CityData {
   id: string;
   name: string;
+  country: string;
   tz: string;
   origin: { lon: number; lat: number };
   bbox: [number, number, number, number];
   routes: RouteInfo[];
   shapes: ShapeInfo[];
-  attribution: { name: string; license: string; url?: string }[];
+  attribution: Credit[];
   lineVerts: Float32Array;
   lineChains: Uint32Array;
-  water: Float32Array;
   shapePts: THREE.DataTexture;
   shapeTab: THREE.DataTexture;
 }
@@ -48,8 +74,8 @@ export async function loadCity(id: string): Promise<CityData> {
   const metaRes = await fetch(`/api/city/${id}`);
   if (!metaRes.ok) throw new Error(`city ${id}: HTTP ${metaRes.status}`);
   const meta = await metaRes.json();
-  const [pts, lines, chains, water] = await Promise.all(
-    ['points.bin', 'lines.bin', 'chains.bin', 'water.bin'].map((f) => bin(`/api/city/${id}/${f}`)),
+  const [pts, lines, chains] = await Promise.all(
+    ['points.bin', 'lines.bin', 'chains.bin'].map((f) => bin(`/api/city/${id}/${f}`)),
   );
   const shapes: ShapeInfo[] = meta.shapes;
   const tab = new Float32Array(shapes.length * 4);
@@ -58,7 +84,6 @@ export async function loadCity(id: string): Promise<CityData> {
     ...meta,
     lineVerts: new Float32Array(lines),
     lineChains: new Uint32Array(chains),
-    water: new Float32Array(water),
     shapePts: floatTexture(new Float32Array(pts), 2048),
     shapeTab: floatTexture(tab, 1024),
   };

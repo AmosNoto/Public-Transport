@@ -72,11 +72,43 @@ export interface SpectralInput {
 }
 
 /**
- * Hues for routes without a usable colour. Hue sweeps around the spectrum by each route's
- * bearing from the city centre, so the city reads as a rainbow; then routes that run
- * within ~300 m of each other are pushed at least ~28° apart so neighbours stay distinct.
+ * OKLCH hues of the visible spectrum, red to violet, at roughly even perceptual steps.
+ * Spectral light has no magenta or pink, so neither does this ramp.
  */
-export function spectralHues(routes: SpectralInput[], hueStart = 20): Map<string, number> {
+const SPECTRUM = [27, 45, 64, 86, 110, 140, 165, 192, 222, 250, 272, 292];
+
+/** Hue at position s ∈ [0, 1] along the spectrum. */
+export function spectralHue(s: number): number {
+  const x = Math.min(1, Math.max(0, s)) * (SPECTRUM.length - 1);
+  const i = Math.min(SPECTRUM.length - 2, Math.floor(x));
+  return SPECTRUM[i] + (SPECTRUM[i + 1] - SPECTRUM[i]) * (x - i);
+}
+
+/**
+ * The most saturated displayable colour of a hue, kept bright enough to read as light
+ * (lightness 0.6–0.86), like the lens's spectral rays.
+ */
+export function vivid(h: number): RGB {
+  let bestL = 0.7, bestC = 0;
+  for (let L = 0.6; L <= 0.861; L += 0.02) {
+    let lo = 0, hi = 0.4;
+    for (let k = 0; k < 18; k++) {
+      const mid = (lo + hi) / 2;
+      const rgb = oklchToLinear({ L, C: mid, h });
+      if (rgb.every((v) => v >= -1e-4 && v <= 1 + 1e-4)) lo = mid; else hi = mid;
+    }
+    if (lo > bestC + 0.004) { bestC = lo; bestL = L; }
+  }
+  return oklchToRgb({ L: bestL, C: bestC * 0.97, h });
+}
+
+/**
+ * Spectrum positions (0 = red … 1 = violet) for routes without a usable colour. Position
+ * sweeps with each route's bearing from the city centre, so the city reads as a rainbow;
+ * routes that run within ~300 m of each other are then pushed apart on the spectrum so
+ * neighbours stay distinct.
+ */
+export function spectralPositions(routes: SpectralInput[]): Map<string, number> {
   const out = new Map<string, number>();
   if (!routes.length) return out;
   let cx = 0, cy = 0, n = 0;
@@ -105,20 +137,23 @@ export function spectralHues(routes: SpectralInput[], hueStart = 20): Map<string
       for (const a of s) for (const b of o) if (a !== b) { nb[a].add(b); nb[b].add(a); }
     }
   }
-  const hue: number[] = new Array(info.length).fill(NaN);
-  const dist = (a: number, b: number) => { const d = Math.abs(a - b) % 360; return d > 180 ? 360 - d : d; };
+  const pos: number[] = new Array(info.length).fill(NaN);
+  const MIN_SEP = Math.min(0.14, 0.9 / Math.max(2, Math.sqrt(info.length)));
   info.forEach((_, i) => {
-    const base = (hueStart + (360 * i) / info.length) % 360;
+    // A triangle wave (0→1→0) around the city keeps the sweep continuous: no red/violet seam.
+    const t = info.length > 1 ? i / info.length : 0;
+    const base = t < 0.5 ? t * 2 : 2 - t * 2;
     let pick = base, pickScore = -1;
-    for (let k = 0; k <= 60; k++) {
-      const h = (base + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * 6 + 360) % 360;
-      let minD = 180;
-      for (const j of nb[i]) if (!Number.isNaN(hue[j])) minD = Math.min(minD, dist(h, hue[j]));
-      if (minD >= 28) { pick = h; break; }
-      if (minD > pickScore) { pickScore = minD; pick = h; }
+    for (let k = 0; k <= 50; k++) {
+      const p = base + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * 0.02;
+      if (p < 0 || p > 1) continue;
+      let minD = 1;
+      for (const j of nb[i]) if (!Number.isNaN(pos[j])) minD = Math.min(minD, Math.abs(p - pos[j]));
+      if (minD >= MIN_SEP) { pick = p; break; }
+      if (minD > pickScore) { pickScore = minD; pick = p; }
     }
-    hue[i] = pick;
+    pos[i] = pick;
   });
-  info.forEach((it, i) => out.set(it.r.key, hue[i]));
+  info.forEach((it, i) => out.set(it.r.key, pos[i]));
   return out;
 }

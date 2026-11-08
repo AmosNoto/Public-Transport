@@ -18,11 +18,13 @@ export function gtfsRtAdapter(): SourceAdapter {
   let failures = 0, polls = 0;
 
   async function poll(ctx: AdapterContext) {
-    const url = ctx.feed.vehicles!;
-    const headers: Record<string, string> = { 'User-Agent': config.userAgent, ...ctx.feed.headers };
+    const rt = ctx.feed.realtime;
+    if (!rt || rt.kind !== 'gtfs-rt') return;
+    const url = rt.url;
+    const headers: Record<string, string> = { 'User-Agent': config.userAgent, ...rt.headers };
     if (etag) headers['If-None-Match'] = etag;
     if (lastModified) headers['If-Modified-Since'] = lastModified;
-    const base = Math.max(config.pollIntervalS, ctx.feed.minIntervalS ?? 0);
+    const base = Math.max(config.pollIntervalS, rt.minIntervalS ?? 0);
     let next = base;
     polls++;
     try {

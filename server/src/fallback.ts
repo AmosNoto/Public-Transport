@@ -29,13 +29,13 @@ export class FeedFallback {
 
   private liveUsable(): boolean {
     const h = this.health();
-    return !!this.feed.vehicles && !!h && h.state === 'ok' && h.vehicles > 0;
+    return !!this.feed.realtime && !!h && h.state === 'ok' && h.vehicles > 0;
   }
 
   /** Re-evaluate; returns scheduled vehicles to send and keys that have ended. */
   tick(now = Date.now() / 1000): { changed: VehicleState[]; gone: string[] } {
     if (this.liveUsable()) this.lastLive = now;
-    const want = FORCED.has(this.feed.id) || !this.feed.vehicles || now - this.lastLive > LIVE_GRACE_S ? 'scheduled' : 'live';
+    const want = FORCED.has(this.feed.id) || !this.feed.realtime || now - this.lastLive > LIVE_GRACE_S ? 'scheduled' : 'live';
     if (want !== this.mode) console.log(`[fallback] ${this.ix.def.id}/${this.feed.id}: ${this.mode} → ${want}`);
     this.mode = want;
 

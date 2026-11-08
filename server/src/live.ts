@@ -74,9 +74,10 @@ export class LiveCity {
       let cands: number[];
       if (tripShape !== undefined) cands = [tripShape];
       else {
-        const dflt = f.routeId !== undefined ? ix.defaultShape.get(`${f.feed}:${f.routeId}:${f.directionId ?? 0}`) : undefined;
-        const all = (this.routeShapes.get(route) ?? []).slice();
-        cands = [...new Set([...(prev && prev.route === route && prev.shape >= 0 ? [prev.shape] : []), ...(dflt !== undefined ? [dflt] : []), ...all])];
+        const routeId = f.routeId ?? ix.routes[route].id;
+        const dir = f.directionId !== undefined ? ix.dirShapes.get(`${f.feed}:${routeId}:${f.directionId}`) ?? [] : [];
+        const all = this.routeShapes.get(route) ?? [];
+        cands = [...new Set([...(prev && prev.route === route && prev.shape >= 0 ? [prev.shape] : []), ...dir, ...all])];
       }
 
       const mode = ix.routes[route].mode;
