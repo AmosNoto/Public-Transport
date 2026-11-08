@@ -3,7 +3,7 @@
 // Every gesture keeps the geographic point under the pointer fixed, on the globe and the map.
 
 import * as THREE from 'three';
-import { R, D2R, focusOf, rayToGeo, wrap180, arc, type Focus } from './geo.ts';
+import { R, D2R, focusOf, rayToGeo, worldOf, wrap180, arc, type Focus } from './geo.ts';
 
 export const ALT_MIN = 180;
 export const ALT_MAX = 48_000_000;
@@ -86,20 +86,61 @@ export class GlobeCamera {
     const w = this.el.clientWidth || innerWidth, h = this.el.clientHeight || innerHeight;
     this.ray.setFromCamera(new THREE.Vector2((x / w) * 2 - 1, -(y / h) * 2 + 1), this.camera);
     const o = this.ray.ray.origin, d = this.ray.ray.direction;
-    return rayToGeo(this.focus, this.morph, [o.x, o.y, o.z], [d.x, d.y, d.z]);
+    let g = rayToGeo(this.focus, this.morph, [o.x, o.y, o.z], [d.x, d.y, d.z]);
+    if (!g || this.morph <= 0.001 || this.morph >= 0.999) return g;
+    // Mid-unroll the surface is a blend of sphere and plane: refine the first guess (sphere or
+    // plane) with Newton steps until the point really projects under the pointer. Without
+    // this, picking jumps when the guess switches surfaces, and zooming drags the view.
+    const eps = Math.max(1e-7, (this.metresPerPixel() * 2) / R);
+    for (let it = 0; it < 5; it++) {
+      const s0 = this.toScreen(g.lon, g.lat), sx = this.toScreen(g.lon + eps, g.lat), sy = this.toScreen(g.lon, g.lat + eps);
+      if (!s0 || !sx || !sy) break;
+      const ex = x - s0.x, ey = y - s0.y;
+      if (ex * ex + ey * ey < 0.04) break;
+      const a = (sx.x - s0.x) / eps, b = (sy.x - s0.x) / eps, c = (sx.y - s0.y) / eps, dd = (sy.y - s0.y) / eps;
+      const det = a * dd - b * c;
+      if (Math.abs(det) < 1e-12) break;
+      g = { lon: g.lon + (dd * ex - b * ey) / det, lat: Math.max(-1.5, Math.min(1.5, g.lat + (a * ey - c * ex) / det)) };
+    }
+    return g;
   }
 
-  /** Move the focus so that geographic point `g` sits under screen position (x, y). */
-  private anchor(g: { lon: number; lat: number }, x: number, y: number) {
+  private v3 = new THREE.Vector3();
+  /** Screen position (CSS px) of a geographic point (radians) under the current camera. */
+  toScreen(lon: number, lat: number): { x: number; y: number } | null {
+    const p = worldOf(this.focus, lon, lat, this.morph);
+    const v = this.v3.set(p[0], p[1], p[2]).project(this.camera);
+    if (!Number.isFinite(v.x) || v.z > 1) return null;
+    const w = this.el.clientWidth || innerWidth, h = this.el.clientHeight || innerHeight;
+    return { x: (v.x * 0.5 + 0.5) * w, y: (-v.y * 0.5 + 0.5) * h };
+  }
+
+  /**
+   * Move the focus so that geographic point `g` sits under screen position (x, y). `maxStep`
+   * (radians) limits how far one call may move the view, so an ill-conditioned anchor near
+   * the globe's edge can never fling it.
+   */
+  private anchor(g: { lon: number; lat: number }, x: number, y: number, maxStep = Infinity) {
     for (let i = 0; i < 3; i++) {
       const h = this.pick(x, y);
       if (!h) return;
-      const dLon = wrap180((g.lon - h.lon) / D2R), dLat = (g.lat - h.lat) / D2R;
+      let dLon = wrap180((g.lon - h.lon) / D2R), dLat = (g.lat - h.lat) / D2R;
       if (Math.abs(dLon) < 1e-9 && Math.abs(dLat) < 1e-9) return;
+      const step = Math.hypot(dLon * Math.cos(this.focus.lat), dLat) * D2R;
+      if (step > maxStep) { const k = maxStep / step; dLon *= k; dLat *= k; }
       this.view.lon += dLon;
       this.view.lat += dLat;
       this.apply();
     }
+  }
+
+  /** How squarely the globe faces the camera at a point (1 = centre, 0 = limb); 1 on the flat map. */
+  private facing(g: { lon: number; lat: number }): number {
+    if (this.morph >= 0.6) return 1;
+    const p = worldOf(this.focus, g.lon, g.lat, 0);
+    const n = [p[0] / R, (p[1] + R) / R, p[2] / R], c = this.camera.position;
+    const to = [c.x - p[0], c.y - p[1], c.z - p[2]], len = Math.hypot(to[0], to[1], to[2]);
+    return (n[0] * to[0] + n[1] * to[1] + n[2] * to[2]) / len;
   }
 
   // ---------- gestures ----------
@@ -201,8 +242,13 @@ export class GlobeCamera {
   }
 
   private zoomTo(target: number, x: number, y: number) {
-    const geo = this.pick(x, y);
-    this.zoom = { target: Math.min(ALT_MAX, Math.max(ALT_MIN, target)), x, y, geo };
+    target = Math.min(ALT_MAX, Math.max(ALT_MIN, target));
+    // Zooming in heads toward the pointer; zooming out keeps the view where it is (anchoring
+    // on the way out is what slowly dragged the view toward a pole). Points near the globe's
+    // edge are too oblique to anchor on.
+    let geo = target < this.view.alt ? this.pick(x, y) : null;
+    if (geo && this.facing(geo) < 0.35) geo = null;
+    this.zoom = { target, x, y, geo };
     if (this.reducedMotion) this.stepZoom(1);
   }
 
@@ -237,7 +283,8 @@ export class GlobeCamera {
     const { target, x, y, geo } = this.zoom;
     this.view.alt = Math.exp(Math.log(this.view.alt) + (Math.log(target) - Math.log(this.view.alt)) * k);
     this.apply();
-    if (geo) this.anchor(geo, x, y);
+    // At most a fifth of the visible span per frame.
+    if (geo) this.anchor(geo, x, y, (this.view.alt / R) * 0.2 + 1e-6);
     if (Math.abs(Math.log(this.view.alt / target)) < 0.002) this.zoom = null;
   }
 
@@ -258,6 +305,8 @@ export class GlobeCamera {
   }
 
   get flying() { return !!this.flight; }
+  /** Where the current flight is heading, if any. */
+  get flightTarget(): View | null { return this.flight?.to ?? null; }
 
   private stepFlight(dt: number) {
     const f = this.flight!;

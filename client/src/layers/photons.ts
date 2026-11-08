@@ -9,6 +9,8 @@ import type { SharedUniforms, LayerUniforms, CityUniforms } from '../engine/engi
 import type { CityData } from '../data/city.ts';
 
 const PHI = 0.6180339887;
+/** Metres per second along the route. */
+const PHOTON_SPEED = 85;
 
 export class Photons {
   readonly mesh: THREE.Mesh;
@@ -92,13 +94,17 @@ export class Photons {
     this.geo.instanceCount = out.length / 4;
   }
 
-  /** Advance at a constant speed in screen pixels per second, whatever the zoom. */
+  /**
+   * Advance at a constant real-world speed, like light along the lens's rays. (A constant
+   * on-screen speed made a zoomed-out city race and a zoomed-in one crawl.) About eight times
+   * a typical vehicle's speed: clearly flowing, never frantic.
+   */
   tick(dt: number, metresPerPixel: number, reducedMotion: boolean) {
     // Photons are detail: they fade out as the city shrinks to a few pixels.
     const z = Math.min(1, Math.max(0, (220 - metresPerPixel) / 160));
     this.mat.uniforms.uZoomFade.value = z * z * (3 - 2 * z);
     if (reducedMotion) return;
-    this.clock = (this.clock + dt * 70 * metresPerPixel) % 1e7;
+    this.clock = (this.clock + dt * PHOTON_SPEED) % 1e7;
     this.mat.uniforms.uClock.value = this.clock;
   }
 }

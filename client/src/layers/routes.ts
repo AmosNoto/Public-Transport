@@ -6,40 +6,18 @@
 import * as THREE from 'three';
 import { COMMON, ROUTES } from '../engine/glsl.ts';
 import type { SharedUniforms, LayerUniforms, CityUniforms } from '../engine/engine.ts';
+import type { Ribbon } from './ribbon.ts';
 
-export function routeLines(verts: Float32Array, chains: Uint32Array, u: SharedUniforms, lu: LayerUniforms, cu: CityUniforms, routeTex: THREE.Texture) {
-  let nv = 0, ni = 0;
-  for (let c = 0; c < chains.length; c += 3) { nv += chains[c + 1] * 2; ni += (chains[c + 1] - 1) * 6; }
-  const pos = new Float32Array(nv * 2), prev = new Float32Array(nv * 2), next = new Float32Array(nv * 2);
-  const side = new Float32Array(nv), route = new Float32Array(nv);
-  const index = new Uint32Array(ni);
-  let v = 0, k = 0;
-  for (let c = 0; c < chains.length; c += 3) {
-    const start = chains[c], n = chains[c + 1], r = chains[c + 2];
-    for (let i = 0; i < n; i++) {
-      const p = (start + i) * 2, pp = (start + Math.max(0, i - 1)) * 2, pn = (start + Math.min(n - 1, i + 1)) * 2;
-      for (const s of [-1, 1]) {
-        pos[v * 2] = verts[p]; pos[v * 2 + 1] = verts[p + 1];
-        prev[v * 2] = verts[pp]; prev[v * 2 + 1] = verts[pp + 1];
-        next[v * 2] = verts[pn]; next[v * 2 + 1] = verts[pn + 1];
-        side[v] = s; route[v] = r;
-        v++;
-      }
-      if (i < n - 1) {
-        const a = v - 2;
-        index[k++] = a; index[k++] = a + 1; index[k++] = a + 2;
-        index[k++] = a + 2; index[k++] = a + 1; index[k++] = a + 3;
-      }
-    }
-  }
+export function routeLines(r: Ribbon, u: SharedUniforms, lu: LayerUniforms, cu: CityUniforms, routeTex: THREE.Texture) {
   const g = new THREE.BufferGeometry();
-  g.setAttribute('rel', new THREE.BufferAttribute(pos, 2));
-  g.setAttribute('prevRel', new THREE.BufferAttribute(prev, 2));
-  g.setAttribute('nextRel', new THREE.BufferAttribute(next, 2));
-  g.setAttribute('side', new THREE.BufferAttribute(side, 1));
-  g.setAttribute('route', new THREE.BufferAttribute(route, 1));
-  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(nv * 3), 3));
-  g.setIndex(new THREE.BufferAttribute(index, 1));
+  g.setAttribute('rel', new THREE.BufferAttribute(r.pos, 2));
+  g.setAttribute('prevRel', new THREE.BufferAttribute(r.prev, 2));
+  g.setAttribute('nextRel', new THREE.BufferAttribute(r.next, 2));
+  g.setAttribute('side', new THREE.BufferAttribute(r.side, 1));
+  g.setAttribute('route', new THREE.BufferAttribute(r.route, 1));
+  g.setIndex(new THREE.BufferAttribute(r.index, 1));
+  // Positions come from the shader; give three a bound so it never needs a position attribute.
+  g.boundingSphere = new THREE.Sphere(new THREE.Vector3(), Infinity);
 
   const mat = new THREE.ShaderMaterial({
     uniforms: { ...u, ...lu, ...cu, uRouteTex: { value: routeTex }, uWidth: { value: 2.2 }, uGain: { value: 0.5 } },

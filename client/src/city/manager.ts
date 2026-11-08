@@ -13,6 +13,7 @@ import { routeLines } from '../layers/routes.ts';
 import { Vehicles, type WireVehicle } from '../layers/vehicles.ts';
 import { Photons } from '../layers/photons.ts';
 import { cityGlow } from '../layers/glow.ts';
+import { buildRibbon } from '../layers/ribbon.ts';
 
 /** Below this altitude a nearby city's detail is loaded. */
 const DETAIL_ALT = 1_600_000;
@@ -35,7 +36,7 @@ class CityDetail {
   constructor(readonly data: CityData, u: SharedUniforms, lu: LayerUniforms, modes: Record<Mode, boolean>) {
     this.routes = new RouteState(data);
     this.routes.update(modes);
-    this.lines = routeLines(data.lineVerts, data.lineChains, u, lu, this.cu, this.routes.texture);
+    this.lines = routeLines(data.ribbon, u, lu, this.cu, this.routes.texture);
     this.photons = new Photons(data, u, lu, this.cu, this.routes.texture);
     this.vehicles = new Vehicles(data, u, lu, this.cu, this.routes.texture);
     this.group.add(this.lines, this.photons.mesh, this.vehicles.mesh);
@@ -75,6 +76,7 @@ export interface CityEntry {
   detail?: CityDetail;
   loading: boolean;
   leftAt: number;
+  nearSince: number;
   fade: number;
   night: number;
   /** Distance from the view focus (m), updated each frame. */
@@ -90,8 +92,31 @@ export class CityManager {
   onChange: () => void = () => {};
 
   constructor(private u: SharedUniforms, private cam: GlobeCamera, private live: LiveClient) {
+    this.warmUp();
     this.refreshList();
     setInterval(() => this.refreshList(), 20_000);
+  }
+
+  /**
+   * Compile the city shaders up front with a tiny invisible stand-in city, so the first real
+   * city to appear doesn't stall a frame on shader compilation. It stays (fully transparent)
+   * so the compiled programs stay alive.
+   */
+  private warmUp() {
+    const tex = (w: number) => { const t = new THREE.DataTexture(new Float32Array(w * 4), w, 1, THREE.RGBAFormat, THREE.FloatType); t.needsUpdate = true; return t; };
+    const pts = tex(2048), tab = tex(1024);
+    (pts.image.data as Float32Array).set([0, 0, 0, 0, 1e-5, 0, 100, 0]);
+    (tab.image.data as Float32Array).set([0, 2, 100, 0]);
+    const data: CityData = {
+      id: '_warmup', name: '', country: '', tz: 'UTC', origin: { lon: 0, lat: 0 }, bbox: [0, 0, 0, 0],
+      routes: [{ id: 'w', feed: 'w', short: '', long: '', mode: 'bus', light: [1, 1, 1], ink: [0, 0, 0], official: false }],
+      shapes: [{ id: 'w', route: 0, start: 0, count: 2, length: 100 }], attribution: [],
+      ribbon: buildRibbon(new Float32Array([0, 0, 1e-5, 0]), new Uint32Array([0, 2, 0])),
+      shapePts: pts, shapeTab: tab,
+    };
+    const d = new CityDetail(data, this.u, layerUniforms(), this.modes);
+    d.cu.uAlpha.value = 0;
+    this.group.add(d.group);
   }
 
   private async refreshList() {
@@ -100,7 +125,7 @@ export class CityManager {
     for (const info of list) {
       let e = this.cities.get(info.id);
       if (!e) {
-        e = { info, lu: layerUniforms(), glowCu: { uAlpha: { value: 1 }, uBoost: { value: 1 } }, glowN: 0, radius: 20_000, loading: false, leftAt: 0, fade: 0, night: 0, dist: Infinity };
+        e = { info, lu: layerUniforms(), glowCu: { uAlpha: { value: 1 }, uBoost: { value: 1 } }, glowN: 0, radius: 20_000, loading: false, leftAt: 0, nearSince: 0, fade: 0, night: 0, dist: Infinity };
         this.cities.set(info.id, e);
       } else e.info = { ...e.info, ...info, live: e.info.live, scheduled: e.info.scheduled };
       if (info.bbox) {
@@ -180,9 +205,15 @@ export class CityManager {
       const o = e.info.origin;
       e.dist = arc(f.lon, f.lat, o.lon * D2R, o.lat * D2R) * R;
       const near = alt < DETAIL_ALT && e.dist < Math.max(alt * 0.9, 120_000) + e.radius;
-      if (near && e.info.state === 'ready') {
+      // Don't load cities a flight merely passes; load the destination early, others once the
+      // camera has settled near them.
+      const dest = cam.flightTarget;
+      const destNear = !!dest && arc(dest.lon * D2R, dest.lat * D2R, o.lon * D2R, o.lat * D2R) * R < e.radius + 60_000;
+      if (near) e.nearSince ||= now; else e.nearSince = 0;
+      const settled = near && (dest ? destNear : now - e.nearSince > 350);
+      if ((near || destNear) && e.info.state === 'ready') {
         e.leftAt = 0;
-        if (!e.detail && !e.loading) this.load(e);
+        if (!e.detail && !e.loading && (settled || destNear)) this.load(e);
       } else if (e.detail) {
         if (!e.leftAt) e.leftAt = now;
         else if (now - e.leftAt > LINGER_MS) this.unload(e);
