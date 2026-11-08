@@ -75,13 +75,15 @@ export class Photons {
     }
     const scale = total > budget ? budget / total : 1;
     const out: number[] = [];
-    let k = 0;
     for (const w of want) {
       const n = Math.max(1, Math.floor(w.n * scale));
-      for (let i = 0; i < n; i++, k++) {
-        // Golden-ratio phases, offset per shape, plus a small per-photon speed spread.
-        const phase = ((i / n) + ((k * PHI) % 1) / n + w.s * PHI) % 1;
-        out.push(w.s, phase, w.b, 0.92 + ((k * PHI * 7) % 1) * 0.16);
+      const offset = (w.s * 0.7548776662) % 1; // per-shape offset (plastic-number sequence)
+      for (let i = 0; i < n; i++) {
+        // Photon i of a shape always has the same phase and speed, however many photons the
+        // shape has: the golden-ratio sequence stays evenly spread as photons are added or
+        // removed, so a change in service never makes existing photons jump.
+        const phase = (offset + i * PHI) % 1;
+        out.push(w.s, phase, w.b, 0.92 + ((offset * 3.1 + i * PHI * 7) % 1) * 0.16);
       }
     }
     const attr = new THREE.InstancedBufferAttribute(Float32Array.from(out), 4);
