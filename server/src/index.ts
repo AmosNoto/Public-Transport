@@ -1,6 +1,7 @@
-// Afterglow server: preprocesses static GTFS, polls live sources politely, and streams one
-// normalised vehicle stream to browsers over WebSocket. Clients subscribe per city as the
-// camera approaches; at globe level they get only per-city counts and a static glow sample.
+// Afterglow server: discovers feeds, polls live sources politely, builds timetables in the
+// background, and streams one normalised vehicle stream to browsers over WebSocket. Clients
+// subscribe per place as the camera approaches; at globe level they get only per-place counts
+// and a compact glow of each place's route network.
 
 import path from 'node:path';
 import fs from 'node:fs';
@@ -8,132 +9,92 @@ import Fastify from 'fastify';
 import websocket from '@fastify/websocket';
 import compress from '@fastify/compress';
 import fastifyStatic from '@fastify/static';
-import type { WebSocket } from 'ws';
 import { config } from './config.ts';
 import { cityDefs } from './cities/index.ts';
-import { buildCity, type CityIndex } from './static/gtfs.ts';
+import { discover, CATALOG_ATTRIBUTION, type Discovery } from './catalog/mobilitydb.ts';
+import { readGlow, type CityIndex } from './static/gtfs.ts';
 import { waterTile, BASEMAP_ATTRIBUTION, MAX_WATER_ZOOM } from './static/basemap.ts';
-import { LiveCity, toWire, type VehicleState } from './live.ts';
-import { gtfsRtAdapter } from './adapters/gtfs-rt.ts';
-import { hslMqttAdapter } from './adapters/hsl-mqtt.ts';
-import { FeedFallback, FORCED } from './fallback.ts';
-import type { SourceAdapter } from './adapters/types.ts';
-import type { CityDef, FeedDef, FeedHealth } from './types.ts';
+import { toWire, type VehicleState } from './live.ts';
+import { Places, type Place } from './places.ts';
 
-interface CityRuntime {
-  def: CityDef;
-  state: 'queued' | 'building' | 'ready' | 'error';
-  ready: Promise<void>;
-  index?: CityIndex;
-  live?: LiveCity;
-  fallbacks: FeedFallback[];
-  adapters: SourceAdapter[];
-  subscribers: Set<WebSocket>;
-  error?: string;
-}
-
-const health = new Map<string, FeedHealth>();
-const cities = new Map<string, CityRuntime>();
-
-function adapterFor(feed: FeedDef): SourceAdapter | null {
-  if (!feed.realtime || FORCED.has(feed.id)) return null; // forced to the timetable: don't poll live
-  switch (feed.realtime.kind) {
-    case 'gtfs-rt': return gtfsRtAdapter();
-    case 'hsl-mqtt': return hslMqttAdapter();
-  }
-}
-
-function send(rt: CityRuntime, msg: object) {
-  if (!rt.subscribers.size) return;
+function send(p: Place, msg: object) {
+  if (!p.subscribers.size) return;
   const s = JSON.stringify(msg);
-  for (const ws of rt.subscribers) if (ws.readyState === 1) ws.send(s);
-}
-const broadcast = (rt: CityRuntime, changed: VehicleState[]) =>
-  changed.length && send(rt, { type: 'veh', city: rt.def.id, now: Date.now() / 1000, v: changed.map(toWire) });
-const sendGone = (rt: CityRuntime, keys: string[]) =>
-  keys.length && send(rt, { type: 'gone', city: rt.def.id, now: Date.now() / 1000, keys });
-
-async function startCity(rt: CityRuntime) {
-  const { def } = rt;
-  rt.state = 'building';
-  const t0 = Date.now();
-  rt.index = await buildCity(def);
-  const ix = rt.index;
-  console.log(`[static] ${def.id}: ${ix.routes.length} routes, ${ix.shapes.length} shapes, ${ix.tripRoute.size} trips, ${ix.lineVerts.length / 2} line vertices in ${((Date.now() - t0) / 1000).toFixed(1)} s`);
-  rt.live = new LiveCity(ix);
-  for (const feed of def.feeds) rt.fallbacks.push(new FeedFallback(ix, feed, () => health.get(feed.id)));
-  for (const feed of def.feeds) {
-    const a = adapterFor(feed);
-    if (!a) continue;
-    a.start({
-      cityId: def.id, feed,
-      emit: (fixes) => broadcast(rt, rt.live!.apply(fixes)),
-      health: (p) => health.set(feed.id, { ...health.get(feed.id)!, ...p }),
-    });
-    rt.adapters.push(a);
-  }
-  rt.state = 'ready';
+  for (const ws of p.subscribers) if (ws.readyState === 1) ws.send(s);
 }
 
-// Build cities one at a time (memory stays bounded), smallest downloads first.
-const defs = cityDefs();
-for (const def of defs) {
-  const rt: CityRuntime = { def, state: 'queued', fallbacks: [], adapters: [], subscribers: new Set(), ready: Promise.resolve() };
-  for (const f of def.feeds) {
-    health.set(f.id, {
-      feed: f.id, city: def.id, state: f.realtime && !FORCED.has(f.id) ? 'starting' : 'timetable', detail: f.realtime ? undefined : f.note,
-      vehicles: 0, polls: 0, failures: 0,
-    });
+const places = new Places((p: Place, changed: VehicleState[], gone: string[]) => {
+  const now = Date.now() / 1000;
+  if (changed.length) send(p, { type: 'veh', city: p.def.id, now, v: changed.map(toWire) });
+  if (gone.length) send(p, { type: 'gone', city: p.def.id, now, keys: gone });
+});
+
+// Curated cities first, then everything the catalog knows about.
+const curated = cityDefs();
+for (const def of curated) await places.add(def);
+let discovery: Discovery | null = null;
+let discoveryError: string | null = null;
+async function runDiscovery() {
+  if (!config.catalog) return;
+  try {
+    const covered = new Set(curated.flatMap((c) => c.feeds.flatMap((f) => f.mdb ?? [])));
+    discovery = await discover(covered, config.maxStaticBytes);
+    discoveryError = null;
+    for (const def of discovery.cities) await places.add(def);
+    console.log(`[catalog] ${discovery.cities.length} places from the Mobility Database, ${discovery.skipped.length} feeds skipped`);
+  } catch (e) {
+    discoveryError = (e as Error).message;
+    console.error('[catalog] discovery failed:', e);
   }
-  cities.set(def.id, rt);
 }
-const ORDER = ['seattle', 'boston', 'brisbane', 'oslo', 'toronto', 'helsinki', 'amsterdam'];
-const rank = (id: string) => { const i = ORDER.indexOf(id); return i < 0 ? ORDER.length : i; };
-let chain = Promise.resolve();
-for (const rt of [...cities.values()].sort((a, b) => rank(a.def.id) - rank(b.def.id))) {
-  rt.ready = chain = chain.then(() => startCity(rt)).catch((e) => {
-    rt.state = 'error';
-    rt.error = (e as Error).message;
-    console.error(`[city] ${rt.def.id} failed:`, e);
-  });
-}
+void runDiscovery();
+// New feeds appear in the catalog over time.
+setInterval(runDiscovery, 24 * 3600 * 1000);
 
 const app = Fastify({ logger: false });
 await app.register(compress, { global: true, encodings: ['br', 'gzip'], threshold: 2048, customTypes: /^application\/(json|octet-stream)/ });
 await app.register(websocket);
 
-async function readyCity(id: string) {
-  const rt = cities.get(id);
-  if (!rt) return null;
-  await rt.ready;
-  return rt.index ? rt : null;
-}
+const counts = (p: Place, now = Date.now() / 1000) => ({ live: p.liveCount(now), scheduled: p.scheduledCount() });
 
-function counts(rt: CityRuntime) {
-  return { live: rt.live?.activeCount() ?? 0, scheduled: rt.fallbacks.reduce((n, f) => n + f.shown.size, 0) };
-}
-
-function attribution(rt: CityRuntime) {
+function attribution(p: Place) {
   return [
-    ...rt.def.feeds.map((f) => ({ name: f.attribution, license: f.license.name, url: f.license.url, legend: f.legend })),
+    ...p.def.feeds.map((f) => ({ name: f.attribution, license: f.license.name, url: f.license.url, legend: f.legend })),
+    ...(p.def.source === 'catalog' ? [CATALOG_ATTRIBUTION] : []),
     { name: BASEMAP_ATTRIBUTION, license: 'ODbL', url: 'https://www.openstreetmap.org/copyright' },
   ];
 }
 
-app.get('/api/cities', async () => [...cities.values()].map((rt) => ({
-  id: rt.def.id, name: rt.def.name, country: rt.def.country, tz: rt.def.tz, origin: rt.def.origin,
-  bbox: rt.index?.bbox ?? null, state: rt.state, error: rt.error ?? null, ...counts(rt),
-  attribution: attribution(rt),
-})));
+/** Whether any live source of the place can run (has no missing key and isn't forced off). */
+function hasUsableLive(p: Place) {
+  return p.def.feeds.some((f) => places.sourcesOf(f).some((h) => h.state !== 'no-key' && h.state !== 'timetable' && h.state !== 'skipped'));
+}
+
+app.get('/api/cities', async () => {
+  const now = Date.now() / 1000;
+  return [...places.all.values()].filter((p) => p.located && p.state !== 'skipped').map((p) => ({
+    id: p.def.id, name: p.def.name, region: p.def.region ?? '', country: p.def.country, tz: p.def.tz, origin: p.def.origin,
+    bbox: p.summary?.bbox ?? null, state: p.state, error: p.error ?? null, ...counts(p, now),
+    source: p.def.source, timetableOnly: !hasUsableLive(p), v: p.summary ? Math.round(p.summary.builtAt) : 0,
+    attribution: attribution(p),
+  }));
+});
+
+/** Load a place for a viewer (builds its timetable first if needed: can take a while). */
+async function loaded(id: string) {
+  const p = places.all.get(id);
+  if (!p) return null;
+  return (await places.ensureLoaded(p)) && p.index ? p : null;
+}
 
 app.get<{ Params: { id: string } }>('/api/city/:id', async (req, reply) => {
-  const rt = await readyCity(req.params.id);
-  if (!rt) return reply.code(404).send({ error: 'unknown or unavailable city' });
-  const ix = rt.index!;
+  const p = await loaded(req.params.id);
+  if (!p) return reply.code(404).send({ error: 'unknown or unavailable place' });
+  const ix = p.index!;
   reply.header('Cache-Control', 'no-cache');
   return {
-    id: rt.def.id, name: rt.def.name, country: rt.def.country, tz: rt.def.tz, origin: rt.def.origin, bbox: ix.bbox,
-    routes: ix.routes, shapes: ix.shapes, attribution: attribution(rt),
+    id: p.def.id, name: p.def.name, country: p.def.country, tz: p.def.tz, origin: p.def.origin, bbox: ix.bbox,
+    routes: ix.routes, shapes: ix.shapes, attribution: attribution(p),
   };
 });
 
@@ -141,15 +102,65 @@ const BINARIES: Partial<Record<string, (ix: CityIndex) => ArrayBufferView>> = {
   'points.bin': (ix) => ix.points,
   'lines.bin': (ix) => ix.lineVerts,
   'chains.bin': (ix) => ix.lineChains,
-  'glow.bin': (ix) => ix.glow,
 };
 app.get<{ Params: { id: string; file: string } }>('/api/city/:id/:file', async (req, reply) => {
   const get = BINARIES[req.params.file];
-  const rt = get && (await readyCity(req.params.id));
-  if (!rt || !get) return reply.code(404).send({ error: 'not found' });
-  const v = get(rt.index!);
+  const p = get && (await loaded(req.params.id));
+  if (!p || !get) return reply.code(404).send({ error: 'not found' });
+  const v = get(p.index!);
   reply.header('Content-Type', 'application/octet-stream').header('Cache-Control', 'no-cache');
   return reply.send(Buffer.from(v.buffer, v.byteOffset, v.byteLength));
+});
+
+/**
+ * Compact glow of one place: Float32 [minX, minY, maxX, maxY] (origin-relative), then per sample
+ * Uint16 x, Uint16 y (quantised within that box: ~2 m at city scale) and Uint8 r, g, b, 0.
+ */
+/** Most samples per place sent to browsers: a city is a few dozen pixels on the globe, and the glow
+ *  is blurred by bloom, so this is plenty (and keeps all ~300 glows to ~2 MB, fine on a phone). */
+const GLOW_MAX = 1000;
+
+async function glowBin(p: Place): Promise<Buffer> {
+  if (p.glowBin) return p.glowBin;
+  const all = await readGlow(p.summary!);
+  // Samples run along the network, so an even stride keeps them spread over all of it.
+  const total = all.length / 5, n = Math.min(total, GLOW_MAX);
+  const g = new Float32Array(n * 5);
+  for (let i = 0; i < n; i++) g.set(all.subarray(Math.floor((i * total) / n) * 5, Math.floor((i * total) / n) * 5 + 5), i * 5);
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (let i = 0; i < n; i++) {
+    const x = g[i * 5], y = g[i * 5 + 1];
+    if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+  }
+  if (!n) x0 = y0 = x1 = y1 = 0;
+  const out = Buffer.alloc(16 + n * 8);
+  out.writeFloatLE(x0, 0); out.writeFloatLE(y0, 4); out.writeFloatLE(x1, 8); out.writeFloatLE(y1, 12);
+  const sx = x1 > x0 ? 65535 / (x1 - x0) : 0, sy = y1 > y0 ? 65535 / (y1 - y0) : 0;
+  const c = (v: number) => Math.max(0, Math.min(255, Math.round(v * 255)));
+  for (let i = 0; i < n; i++) {
+    const o = 16 + i * 8;
+    out.writeUInt16LE(Math.round((g[i * 5] - x0) * sx), o);
+    out.writeUInt16LE(Math.round((g[i * 5 + 1] - y0) * sy), o + 2);
+    out[o + 4] = c(g[i * 5 + 2]); out[o + 5] = c(g[i * 5 + 3]); out[o + 6] = c(g[i * 5 + 4]);
+  }
+  return (p.glowBin = out);
+}
+
+/** Glows of several places in one response: per place, Uint32 byte length then its glow (0 if unavailable). */
+app.get<{ Querystring: { ids?: string } }>('/api/glows.bin', async (req, reply) => {
+  const ids = (req.query.ids ?? '').split(',').filter(Boolean).slice(0, 64);
+  const parts: Buffer[] = [];
+  for (const id of ids) {
+    const p = places.all.get(id);
+    let b: Buffer | null = null;
+    if (p?.summary) { try { b = await glowBin(p); } catch { b = null; } }
+    const len = Buffer.alloc(4);
+    len.writeUInt32LE(b ? b.length : 0);
+    parts.push(len);
+    if (b) parts.push(b);
+  }
+  reply.header('Content-Type', 'application/octet-stream').header('Cache-Control', 'public, max-age=3600');
+  return reply.send(Buffer.concat(parts));
 });
 
 app.get<{ Params: { z: string; x: string; y: string } }>('/api/water/:z/:x/:y', async (req, reply) => {
@@ -166,53 +177,71 @@ app.get<{ Params: { z: string; x: string; y: string } }>('/api/water/:z/:x/:y', 
   }
 });
 
-app.get('/api/health', async () => ({
-  now: Date.now() / 1000,
-  cities: [...cities.values()].map((rt) => ({ id: rt.def.id, state: rt.state, error: rt.error ?? null, ...counts(rt) })),
-  feeds: [...health.values()].map((h) => {
-    const fb = cities.get(h.city)?.fallbacks.find((f) => f.feedId === h.feed);
-    return { ...h, mode: fb?.mode ?? (h.state === 'timetable' ? 'scheduled' : 'live'), scheduled: fb?.shown.size ?? 0 };
-  }),
-}));
+app.get('/api/health', async () => {
+  const now = Date.now() / 1000;
+  const mem = process.memoryUsage();
+  return {
+    now,
+    server: { uptime: Math.round(process.uptime()), rssMB: Math.round(mem.rss / 1e6), heapMB: Math.round(mem.heapUsed / 1e6) },
+    catalog: {
+      enabled: config.catalog, error: discoveryError, fetchedAt: discovery?.fetchedAt ?? null,
+      places: discovery?.cities.length ?? 0, attribution: CATALOG_ATTRIBUTION,
+    },
+    builds: places.progress(),
+    cities: [...places.all.values()].map((p) => ({
+      id: p.def.id, name: p.def.name, country: p.def.country, source: p.def.source, state: p.state, error: p.error ?? null,
+      loaded: !!p.live, viewers: p.subscribers.size, ...counts(p, now),
+      timetableMB: p.summary ? Math.round(p.summary.bytes / 1e5) / 10 : null, builtAt: p.summary?.builtAt ?? null,
+    })),
+    feeds: [...places.health.values()].map((h) => {
+      const p = places.all.get(h.city);
+      const fb = p?.fallbacks.find((f) => f.feedId === h.feed || p.def.feeds.find((x) => x.id === f.feedId)?.realtime?.some((r) => r.id === h.feed));
+      return { ...h, cityName: p?.def.name ?? h.city, mode: fb?.mode ?? (h.state === 'timetable' ? 'scheduled' : 'live'), scheduled: fb?.shown.size ?? 0 };
+    }),
+    skipped: discovery?.skipped ?? [],
+    keys: (discovery?.keyed ?? []).map((k) => ({ env: k.env, host: k.host, info: k.info ?? null, feeds: k.feeds.length, set: !!config.key(k.env) })),
+  };
+});
 
 app.register(async (scope) => {
   scope.get('/ws', { websocket: true }, (socket) => {
-    const subs = new Set<CityRuntime>();
+    const subs = new Set<Place>();
     socket.on('message', async (raw: Buffer) => {
       let m: { type?: string; city?: string };
       try { m = JSON.parse(String(raw)); } catch { return; }
-      if (m.type === 'sub' && m.city) {
-        const rt = await readyCity(m.city);
-        if (!rt || subs.has(rt) || socket.readyState !== 1) return;
-        subs.add(rt); rt.subscribers.add(socket);
-        const all = [...rt.live!.vehicles.values(), ...rt.fallbacks.flatMap((f) => [...f.shown.values()])];
-        socket.send(JSON.stringify({ type: 'snap', city: rt.def.id, now: Date.now() / 1000, v: all.map(toWire) }));
-      } else if (m.type === 'unsub' && m.city) {
-        const rt = cities.get(m.city);
-        if (rt) { subs.delete(rt); rt.subscribers.delete(socket); }
+      const p = m.city ? places.all.get(m.city) : undefined;
+      if (m.type === 'sub' && p) {
+        if (subs.has(p)) return;
+        subs.add(p);
+        if (!(await places.ensureLoaded(p)) || !subs.has(p) || socket.readyState !== 1) return;
+        p.subscribers.add(socket);
+        for (const a of p.adapters) a.poke?.();
+        const all = [...p.live!.vehicles.values(), ...p.fallbacks.flatMap((f) => [...f.shown.values()])];
+        socket.send(JSON.stringify({ type: 'snap', city: p.def.id, now: Date.now() / 1000, v: all.map(toWire) }));
+      } else if (m.type === 'unsub' && p) {
+        subs.delete(p); p.subscribers.delete(socket);
+      } else if (m.type === 'want' && p) {
+        places.want(p);
       } else if (m.type === 'ping') {
         socket.send(JSON.stringify({ type: 'pong', now: Date.now() / 1000 }));
       }
     });
-    socket.on('close', () => { for (const rt of subs) rt.subscribers.delete(socket); });
+    socket.on('close', () => { for (const p of subs) p.subscribers.delete(socket); });
   });
 });
 
-// Timetable fallback: re-evaluated every 10 s per feed.
+// Counters for everyone, every few seconds: [live, scheduled] per place with anything running.
 setInterval(() => {
-  for (const rt of cities.values()) for (const fb of rt.fallbacks) {
-    const { changed, gone } = fb.tick();
-    broadcast(rt, changed);
-    sendGone(rt, gone);
+  const now = Date.now() / 1000;
+  let total = 0, scheduled = 0, feeds = 0;
+  const per: Record<string, [number, number]> = {};
+  for (const p of places.all.values()) {
+    const c = counts(p, now);
+    if (c.live || c.scheduled) per[p.def.id] = [c.live, c.scheduled];
+    total += c.live; scheduled += c.scheduled;
   }
-}, 10_000);
-
-// Counters for everyone, every few seconds: live and scheduled vehicles per city.
-setInterval(() => {
-  let total = 0, scheduled = 0;
-  const per: Record<string, { live: number; scheduled: number }> = {};
-  for (const rt of cities.values()) { const c = counts(rt); per[rt.def.id] = c; total += c.live; scheduled += c.scheduled; }
-  const msg = JSON.stringify({ type: 'stats', now: Date.now() / 1000, total, scheduled, cities: per });
+  for (const h of places.health.values()) if (h.state === 'ok') feeds++;
+  const msg = JSON.stringify({ type: 'stats', now, total, scheduled, feeds, cities: per });
   for (const ws of app.websocketServer?.clients ?? []) if (ws.readyState === 1) ws.send(msg);
 }, 4000);
 
@@ -222,4 +251,4 @@ if (config.production && fs.existsSync(dist)) {
 }
 
 await app.listen({ port: config.port, host: '0.0.0.0' });
-console.log(`[afterglow] server on http://localhost:${config.port}; building ${defs.length} cities in the background`);
+console.log(`[afterglow] server on http://localhost:${config.port}; ${curated.length} curated cities${config.catalog ? ' + catalog discovery' : ''}`);

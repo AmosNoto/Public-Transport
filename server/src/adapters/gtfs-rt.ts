@@ -15,16 +15,19 @@ export function gtfsRtAdapter(): SourceAdapter {
   let timer: NodeJS.Timeout | null = null;
   let stopped = false;
   let etag: string | null = null, lastModified: string | null = null;
-  let failures = 0, polls = 0;
+  let failures = 0, polls = 0, lastPoll = 0, inFlight = false;
+  let ctxRef: AdapterContext | null = null;
 
   async function poll(ctx: AdapterContext) {
-    const rt = ctx.feed.realtime;
-    if (!rt || rt.kind !== 'gtfs-rt') return;
-    const url = rt.url;
-    const headers: Record<string, string> = { 'User-Agent': config.userAgent, ...rt.headers };
+    if (stopped || inFlight) return;
+    inFlight = true;
+    lastPoll = Date.now();
+    const rt = ctx.source;
+    const url = ctx.url;
+    const headers: Record<string, string> = { 'User-Agent': config.userAgent, ...ctx.headers };
     if (etag) headers['If-None-Match'] = etag;
     if (lastModified) headers['If-Modified-Since'] = lastModified;
-    const base = Math.max(config.pollIntervalS, rt.minIntervalS ?? 0);
+    const base = Math.max(ctx.intervalS(), rt.minIntervalS ?? 0);
     let next = base;
     polls++;
     try {
@@ -59,7 +62,7 @@ export function gtfsRtAdapter(): SourceAdapter {
           if (!Number.isFinite(lat) || !Number.isFinite(lon) || (lat === 0 && lon === 0)) continue;
           fixes.push({
             feed: ctx.feed.id,
-            vid: v.vehicle?.id || e.id,
+            vid: (ctx.feed.realtime!.length > 1 ? ctx.source.id + '/' : '') + (v.vehicle?.id || e.id),
             label: v.vehicle?.label || undefined,
             tripId: v.trip?.tripId || undefined,
             routeId: v.trip?.routeId || undefined,
@@ -84,16 +87,24 @@ export function gtfsRtAdapter(): SourceAdapter {
       next = Math.min(300, base * 2 ** Math.min(failures, 5)) * (0.8 + Math.random() * 0.4);
       ctx.health({ state: 'network-error', detail: (e as Error).message.slice(0, 120), lastPoll: Date.now() / 1000, polls, failures });
     } finally {
-      if (!stopped) timer = setTimeout(() => poll(ctx), next * 1000);
+      inFlight = false;
+      if (!stopped) { if (timer) clearTimeout(timer); timer = setTimeout(() => poll(ctx), next * 1000); }
     }
   }
 
   return {
     kind: 'gtfs-rt',
     start(ctx) {
-      // Spread first polls so many feeds don't fire at once.
-      timer = setTimeout(() => poll(ctx), Math.random() * 1500);
+      ctxRef = ctx;
+      // Spread first polls so hundreds of feeds don't fire at once.
+      timer = setTimeout(() => poll(ctx), Math.random() * 15_000);
     },
     stop() { stopped = true; if (timer) clearTimeout(timer); },
+    poke() {
+      // Poll now unless we just did (never faster than the normal interval).
+      if (!ctxRef || stopped || inFlight || Date.now() - lastPoll < config.pollIntervalS * 1000) return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => poll(ctxRef!), 0);
+    },
   };
 }

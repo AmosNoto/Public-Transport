@@ -6,7 +6,7 @@ import * as THREE from 'three';
 import { layerUniforms, type CityUniforms, type LayerUniforms, type SharedUniforms } from '../engine/engine.ts';
 import type { GlobeCamera } from '../engine/camera.ts';
 import { R, D2R, arc, layerOffsets, worldOf, subsolar, sunCos } from '../engine/geo.ts';
-import { listCities, loadCity, loadGlow, type CityData, type CityInfo, type Mode } from '../data/city.ts';
+import { listCities, loadCity, loadGlows, type CityData, type CityInfo, type Mode } from '../data/city.ts';
 import type { LiveClient } from '../data/live.ts';
 import { RouteState } from '../layers/routeState.ts';
 import { routeLines } from '../layers/routes.ts';
@@ -72,6 +72,11 @@ export interface CityEntry {
   glowCu: CityUniforms;
   glow?: THREE.Mesh<THREE.InstancedBufferGeometry, THREE.ShaderMaterial>;
   glowN: number;
+  /** Build stamp of the glow on screen, and whether a newer one is being fetched. */
+  glowV: number;
+  glowLoading: boolean;
+  /** When we last asked the server to prepare this place (it isn't built yet). */
+  wantedAt: number;
   radius: number; // metres
   detail?: CityDetail;
   loading: boolean;
@@ -93,8 +98,7 @@ export class CityManager {
 
   constructor(private u: SharedUniforms, private cam: GlobeCamera, private live: LiveClient) {
     this.warmUp();
-    this.refreshList();
-    setInterval(() => this.refreshList(), 20_000);
+    void this.refreshList();
   }
 
   /**
@@ -120,33 +124,56 @@ export class CityManager {
   }
 
   private async refreshList() {
-    let list: CityInfo[];
-    try { list = await listCities(); } catch { return; }
-    for (const info of list) {
+    let list: CityInfo[] | null = null;
+    try { list = await listCities(); } catch { /* server restarting; try again shortly */ }
+    const need: CityEntry[] = [];
+    for (const info of list ?? []) {
       let e = this.cities.get(info.id);
       if (!e) {
-        e = { info, lu: layerUniforms(), glowCu: { uAlpha: { value: 1 }, uBoost: { value: 1 } }, glowN: 0, radius: 20_000, loading: false, leftAt: 0, nearSince: 0, fade: 0, night: 0, dist: Infinity };
+        e = {
+          info, lu: layerUniforms(), glowCu: { uAlpha: { value: 1 }, uBoost: { value: 1 } }, glowN: 0, glowV: 0, glowLoading: false,
+          wantedAt: 0, radius: 20_000, loading: false, leftAt: 0, nearSince: 0, fade: 0, night: 0, dist: Infinity,
+        };
         this.cities.set(info.id, e);
       } else e.info = { ...e.info, ...info, live: e.info.live, scheduled: e.info.scheduled };
       if (info.bbox) {
         const [a, b, c, d] = info.bbox;
-        e.radius = (arc(a * D2R, b * D2R, c * D2R, d * D2R) * R) / 2;
+        e.radius = Math.max(2_000, (arc(a * D2R, b * D2R, c * D2R, d * D2R) * R) / 2);
       }
-      if (info.state === 'ready' && !e.glow && e.glowN === 0) {
-        e.glowN = -1; // loading
-        loadGlow(info.id).then((g) => {
-          e!.glow = cityGlow(g, this.u, e!.lu, e!.glowCu);
-          e!.glowN = g.length / 5;
-          this.group.add(e!.glow);
-        }).catch(() => { e!.glowN = 0; });
-      }
+      if (info.state === 'ready' && e.glowV !== info.v && !e.glowLoading) need.push(e);
     }
-    this.onChange();
+    // Glows in batches (one request per few dozen places).
+    for (let i = 0; i < need.length; i += 40) {
+      const batch = need.slice(i, i + 40);
+      for (const e of batch) e.glowLoading = true;
+      loadGlows(batch.map((e) => e.info.id)).then((m) => {
+        for (const e of batch) {
+          const g = m.get(e.info.id);
+          if (g) this.setGlow(e, g);
+          e.glowV = e.info.v;
+        }
+      }).catch(() => {}).finally(() => { for (const e of batch) e.glowLoading = false; });
+    }
+    if (list) this.onChange();
+    // Poll quickly while a place the camera is near is still being prepared.
+    const waiting = [...this.cities.values()].some((e) => e.wantedAt && e.info.state !== 'ready');
+    setTimeout(() => this.refreshList(), waiting || !list ? 4_000 : 20_000);
   }
 
-  /** Live counts from the server's stats message. */
-  setCounts(per: Record<string, { live: number; scheduled: number }>) {
-    for (const [id, c] of Object.entries(per)) { const e = this.cities.get(id); if (e) { e.info.live = c.live; e.info.scheduled = c.scheduled; } }
+  private setGlow(e: CityEntry, g: Float32Array) {
+    if (e.glow) { this.group.remove(e.glow); e.glow.geometry.dispose(); e.glow.material.dispose(); }
+    e.glow = cityGlow(g, this.u, e.lu, e.glowCu);
+    e.glowN = g.length / 5;
+    this.group.add(e.glow);
+  }
+
+  /** Counts from the server's stats message; places not listed have nothing running. */
+  setCounts(per: Record<string, [number, number]>) {
+    for (const e of this.cities.values()) {
+      const c = per[e.info.id];
+      e.info.live = c ? c[0] : 0;
+      e.info.scheduled = c ? c[1] : 0;
+    }
   }
 
   vehicles(id: string, list: WireVehicle[]) {
@@ -211,6 +238,11 @@ export class CityManager {
       const destNear = !!dest && arc(dest.lon * D2R, dest.lat * D2R, o.lon * D2R, o.lat * D2R) * R < e.radius + 60_000;
       if (near) e.nearSince ||= now; else e.nearSince = 0;
       const settled = near && (dest ? destNear : now - e.nearSince > 350);
+      // Not built yet: ask the server to prepare it next.
+      if ((settled || destNear) && e.info.state !== 'ready' && (!e.wantedAt || now - e.wantedAt > 60_000)) {
+        e.wantedAt = now;
+        this.live.want(e.info.id);
+      }
       if ((near || destNear) && e.info.state === 'ready') {
         e.leftAt = 0;
         if (!e.detail && !e.loading && (settled || destNear)) this.load(e);
@@ -230,7 +262,7 @@ export class CityManager {
       const night = this.u.uDayNight.value * e.night;
       const nightBoost = 0.85 + 0.35 * night;
       const running = e.info.live + e.info.scheduled;
-      const activity = running ? Math.min(1.3, Math.max(0.45, Math.sqrt(running / 250))) : 0.3;
+      const activity = running ? Math.min(1.3, Math.max(0.45, Math.sqrt(running / 250))) : e.info.timetableOnly ? 0.6 : 0.3;
       if (e.glow) {
         // Normalise by how many samples pile into each pixel, so far-away cities don't saturate.
         // Average number of sprites (≈5 px² each) covering each pixel of the city's disc.
@@ -258,6 +290,16 @@ export class CityManager {
     let best: CityEntry | null = null;
     for (const e of this.cities.values()) {
       if (e.fade < 0.5 || e.dist > e.radius * 1.3 + 20_000) continue;
+      if (!best || e.dist < best.dist) best = e;
+    }
+    return best;
+  }
+
+  /** The nearest place the camera is close to that isn't ready to show yet. */
+  pending(): CityEntry | null {
+    let best: CityEntry | null = null;
+    for (const e of this.cities.values()) {
+      if (e.info.state === 'ready' || !e.wantedAt || e.dist > e.radius * 1.3 + 30_000) continue;
       if (!best || e.dist < best.dist) best = e;
     }
     return best;

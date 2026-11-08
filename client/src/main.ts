@@ -7,6 +7,7 @@ import { earthMesh } from './layers/earth.ts';
 import { WaterTiles } from './layers/water.ts';
 import { CityManager } from './city/manager.ts';
 import { Hud } from './ui/hud.ts';
+import { Diagnostics } from './ui/diagnostics.ts';
 
 /**
  * Start over the user's own longitude (from their time zone), with the whole globe in view.
@@ -39,15 +40,17 @@ async function main() {
   engine.base.add(water.group);
 
   // Light: cities.
-  let worldLive = 0, worldSched = 0;
+  let worldLive = 0, worldSched = 0, worldFeeds = 0;
   const hud = new Hud(() => cities.setModes({ ...hud.modes }));
   const live = new LiveClient({
     vehicles: (id, v) => cities.vehicles(id, v),
     gone: (id, keys) => cities.gone(id, keys),
-    stats: (total, scheduled, per) => { worldLive = total; worldSched = scheduled; cities.setCounts(per); },
+    stats: (total, scheduled, feeds, per) => { worldLive = total; worldSched = scheduled; worldFeeds = feeds; cities.setCounts(per); },
   });
   const cities = new CityManager(u, cam, live);
   cities.photonBudget = engine.tier.photonBudget;
+  engine.onTier = (t) => { cities.photonBudget = t.photonBudget; };
+  new Diagnostics(engine);
   cities.onChange = () => hud.setCities([...cities.cities.values()].map((e) => e.info));
   engine.light.add(cities.group);
   hud.onPick = (id) => { const e = cities.cities.get(id); if (e) cities.flyTo(e); };
@@ -76,8 +79,17 @@ async function main() {
     if (now - hudAt > 500) {
       hudAt = now;
       const f = cities.focused();
-      hud.setFocus(f?.info ?? null);
+      // Places on the camera's side of the globe (horizon distance), for the credits panel.
+      const horizon = Math.acos(6371008.8 / (6371008.8 + cam.view.alt)) * 6371008.8 * (1 + cam.morph * 3);
+      hud.setInView(new Set([...cities.cities.values()].filter((e) => e.glow && e.dist < horizon + e.radius).map((e) => e.info.id)));
+      const pend = f ? null : cities.pending();
+      hud.setFocus(f?.info ?? pend?.info ?? null);
       hud.setCounts(f ? f.info.live : null, f ? f.info.scheduled : 0, worldLive, worldSched);
+      hud.setStatus(
+        pend ? (pend.info.state === 'error' ? 'timetable unavailable right now' : 'preparing timetable…')
+        : f?.info.timetableOnly ? 'from the timetable · no live feed'
+        : !f && worldFeeds ? `${worldFeeds} live feeds` : '',
+      );
     }
   });
   engine.start();
@@ -94,7 +106,7 @@ async function main() {
         `display ${(1000 / st.refreshMs).toFixed(0)} Hz, drawing every ${st.divisor === 1 ? 'refresh' : st.divisor + ' refreshes'}`,
         `quality ${engine.tier.name}  dpr ${u.uDpr.value}`,
         `view ${v.lat.toFixed(3)}, ${v.lon.toFixed(3)}  alt ${(v.alt / 1000).toFixed(1)} km  morph ${cam.morph.toFixed(2)}`,
-        `loaded ${loaded.join(', ') || 'none'}  world live ${worldLive} sched ${worldSched}`,
+        `loaded ${loaded.join(', ') || 'none'}  world live ${worldLive} sched ${worldSched} feeds ${worldFeeds}`,
         engine.device.gpu.slice(0, 60),
       ].join('\n');
     }, 500);

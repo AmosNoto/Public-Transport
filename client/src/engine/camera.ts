@@ -259,7 +259,7 @@ export class GlobeCamera {
   }
 
   private key(e: KeyboardEvent) {
-    if ((e.target as HTMLElement)?.closest?.('input, textarea')) return;
+    if ((e.target as HTMLElement)?.closest?.('input, textarea, select')) return;
     const w = this.el.clientWidth, h = this.el.clientHeight;
     const pan = (dx: number, dy: number) => {
       const g = this.pick(w / 2 + dx, h / 2 + dy);

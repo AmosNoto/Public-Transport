@@ -14,17 +14,26 @@ export interface ShapeInfo { id: string; route: number; start: number; count: nu
 
 export interface Credit { name: string; license: string; url?: string; legend?: string }
 
-/** A city as listed by /api/cities (available before its geometry is loaded). */
+/** A place as listed by /api/cities (available before its geometry is loaded). */
 export interface CityInfo {
   id: string;
   name: string;
+  /** State, province or metro area, when known. */
+  region: string;
   country: string;
   tz: string;
   origin: { lon: number; lat: number };
   bbox: [number, number, number, number] | null;
+  /** ready: timetable built (glow and detail available); queued/building: not yet. */
   state: 'queued' | 'building' | 'ready' | 'error';
   live: number;
   scheduled: number;
+  /** Hand-checked city, or discovered from the feed catalog. */
+  source: 'curated' | 'catalog';
+  /** No live source can run (none published, or its API key isn't set): shown from the timetable. */
+  timetableOnly: boolean;
+  /** Build stamp; changes when the timetable is rebuilt. */
+  v: number;
   attribution: Credit[];
 }
 
@@ -34,8 +43,33 @@ export async function listCities(): Promise<CityInfo[]> {
   return r.json();
 }
 
-export async function loadGlow(id: string): Promise<Float32Array> {
-  return new Float32Array(await bin(`/api/city/${id}/glow.bin`));
+/**
+ * Glows of several places in one request, decoded to (x, y, r, g, b) per sample.
+ * Wire format per place: Uint32 length, then Float32 [minX, minY, maxX, maxY] and per sample
+ * Uint16 x, Uint16 y (quantised in that box), Uint8 r, g, b, pad.
+ */
+export async function loadGlows(ids: string[]): Promise<Map<string, Float32Array>> {
+  const buf = await bin(`/api/glows.bin?ids=${ids.map(encodeURIComponent).join(',')}`);
+  const dv = new DataView(buf);
+  const out = new Map<string, Float32Array>();
+  let o = 0;
+  for (const id of ids) {
+    if (o + 4 > buf.byteLength) break;
+    const len = dv.getUint32(o, true);
+    o += 4;
+    if (!len) continue;
+    const x0 = dv.getFloat32(o, true), y0 = dv.getFloat32(o + 4, true), x1 = dv.getFloat32(o + 8, true), y1 = dv.getFloat32(o + 12, true);
+    const n = (len - 16) / 8, sx = (x1 - x0) / 65535, sy = (y1 - y0) / 65535;
+    const g = new Float32Array(n * 5);
+    for (let i = 0, p = o + 16; i < n; i++, p += 8) {
+      g[i * 5] = x0 + dv.getUint16(p, true) * sx;
+      g[i * 5 + 1] = y0 + dv.getUint16(p + 2, true) * sy;
+      g[i * 5 + 2] = dv.getUint8(p + 4) / 255; g[i * 5 + 3] = dv.getUint8(p + 5) / 255; g[i * 5 + 4] = dv.getUint8(p + 6) / 255;
+    }
+    out.set(id, g);
+    o += len;
+  }
+  return out;
 }
 
 export interface CityData {

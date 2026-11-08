@@ -1,5 +1,5 @@
-// Device detection and adaptive quality. No manual setting: the tier is picked from what
-// the device reports and then steered by the measured frame time. `?quality=` overrides.
+// Device detection and adaptive quality. The tier is picked from what the device reports and
+// then steered by the measured frame time. `?quality=` or the diagnostics view can pin it.
 
 export interface Tier {
   name: 'low' | 'medium' | 'high' | 'ultra';
@@ -69,9 +69,12 @@ export class FrameGovernor {
   private lastChange = performance.now();
   private goodSince = performance.now();
   constructor(public tier: number, private readonly ceiling: number, private readonly onChange: (t: number) => void) {}
+  /** Pinned by the diagnostics override: measure nothing, change nothing. */
+  locked = false;
 
   /** `ms`: time between drawn frames; `targetMs`: the interval this tier aims for on this display. */
   frame(ms: number, targetMs: number) {
+    if (this.locked) return;
     this.samples.push(ms / targetMs);
     if (this.samples.length < 90) return;
     const sorted = [...this.samples].sort((a, b) => a - b);

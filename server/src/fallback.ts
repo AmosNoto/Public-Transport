@@ -21,21 +21,26 @@ export class FeedFallback {
   /** Scheduled vehicles currently shown, by key. */
   readonly shown = new Map<string, VehicleState>();
 
-  constructor(private ix: CityIndex, private feed: FeedDef, private health: () => FeedHealth | undefined) {
+  constructor(private ix: CityIndex, private feed: FeedDef, private health: () => FeedHealth[]) {
     this.lastLive = Date.now() / 1000;
   }
 
   get feedId() { return this.feed.id; }
 
+  /** Whether any live source can run at all (one without its API key, or forced off, can't). */
+  private get hasRealtime() {
+    return this.health().some((h) => h.state !== 'no-key' && h.state !== 'skipped' && h.state !== 'timetable');
+  }
+
+  /** Live is usable when any of the feed's sources is delivering vehicles. */
   private liveUsable(): boolean {
-    const h = this.health();
-    return !!this.feed.realtime && !!h && h.state === 'ok' && h.vehicles > 0;
+    return this.hasRealtime && this.health().some((h) => h.state === 'ok' && h.vehicles > 0);
   }
 
   /** Re-evaluate; returns scheduled vehicles to send and keys that have ended. */
   tick(now = Date.now() / 1000): { changed: VehicleState[]; gone: string[] } {
     if (this.liveUsable()) this.lastLive = now;
-    const want = FORCED.has(this.feed.id) || !this.feed.realtime || now - this.lastLive > LIVE_GRACE_S ? 'scheduled' : 'live';
+    const want = FORCED.has(this.feed.id) || !this.hasRealtime || now - this.lastLive > LIVE_GRACE_S ? 'scheduled' : 'live';
     if (want !== this.mode) console.log(`[fallback] ${this.ix.def.id}/${this.feed.id}: ${this.mode} → ${want}`);
     this.mode = want;
 

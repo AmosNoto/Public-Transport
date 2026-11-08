@@ -2,10 +2,21 @@
 
 export type Mode = 'subway' | 'rail' | 'bus' | 'tram';
 
-/** Where a feed's live positions come from. */
-export type RealtimeDef =
-  | { kind: 'gtfs-rt'; url: string; headers?: Record<string, string>; minIntervalS?: number }
-  | { kind: 'hsl-mqtt'; url: string; topic: string };
+/** One source of live positions for a feed. A feed may have several (e.g. one per mode). */
+export interface RealtimeDef {
+  /** Unique id; the feed-health record is keyed by it. */
+  id: string;
+  kind: 'gtfs-rt' | 'hsl-mqtt';
+  url: string;
+  /** MQTT topic (hsl-mqtt). */
+  topic?: string;
+  headers?: Record<string, string>;
+  minIntervalS?: number;
+  /** Who publishes it, for diagnostics. */
+  provider?: string;
+  /** An API key this source needs: the environment variable that holds it and how to send it. */
+  key?: { env: string; param?: string; header?: string; info?: string };
+}
 
 export interface FeedFilter {
   /** Keep only shapes (and so routes and trips) that pass through this box: [minLon, minLat, maxLon, maxLat]. */
@@ -20,8 +31,14 @@ export interface FeedDef {
   /** GTFS static zip. */
   static: string;
   staticHeaders?: Record<string, string>;
-  /** Live positions; absent means the feed is shown from its timetable. */
-  realtime?: RealtimeDef;
+  /** Tried when `static` fails (e.g. the catalog's mirror is missing a file: use the publisher's URL). */
+  staticAlt?: string;
+  /** Live positions; empty or absent means the feed is shown from its timetable. */
+  realtime?: RealtimeDef[];
+  /** Refuse timetables larger than this (bytes); see MAX_STATIC_MB. */
+  maxBytes?: number;
+  /** Mobility Database ids (static and realtime) this feed covers, so discovery skips them. */
+  mdb?: string[];
   filter?: FeedFilter;
   license: { name: string; url?: string };
   attribution: string;
@@ -34,10 +51,17 @@ export interface FeedDef {
 export interface CityDef {
   id: string;
   name: string;
+  /** State, province or metro area, when known. */
+  region?: string;
   country: string;
+  /** IANA time zone. For discovered places it is read from the timetable's agency.txt. */
   tz: string;
-  /** Point everything in the city is stored relative to. */
+  /** Point everything in the city is stored relative to. For discovered places it starts as the
+   *  catalog's bounding-box centre and is replaced by the median stop once the timetable is read. */
   origin: { lon: number; lat: number };
+  /** Discovered places work out origin and time zone from their own timetable. */
+  auto?: boolean;
+  source: 'curated' | 'catalog';
   feeds: FeedDef[];
 }
 
@@ -82,11 +106,15 @@ export interface VehicleFix {
   stopped?: boolean;
 }
 
-export type FeedState = 'starting' | 'ok' | 'stale' | 'empty' | 'http-error' | 'decode-error' | 'network-error' | 'no-key' | 'timetable';
+export type FeedState = 'starting' | 'ok' | 'stale' | 'empty' | 'http-error' | 'decode-error' | 'network-error' | 'no-key' | 'timetable' | 'skipped';
 
 export interface FeedHealth {
+  /** Realtime source id (or the feed id, for timetable-only feeds). */
   feed: string;
   city: string;
+  provider?: string;
+  /** Licence URL, or null when the catalog lists none. */
+  license?: string | null;
   state: FeedState;
   detail?: string;
   lastOk?: number;

@@ -73,13 +73,30 @@ export class Engine {
   private governor: FrameGovernor;
   private lastFrame = 0;
   private hooks: ((dt: number, now: number) => void)[] = [];
+  /** Called whenever the quality tier changes. */
+  onTier: (t: Tier) => void = () => {};
+
+  /** Pin a quality tier (diagnostics), or 'auto' to let measured frame times decide again. */
+  setTier(name: Tier['name'] | 'auto') {
+    if (name === 'auto') { this.governor.locked = false; return; }
+    const i = TIERS.findIndex((t) => t.name === name);
+    if (i < 0) return;
+    this.governor.locked = true;
+    this.governor.tier = i;
+    this.tier = TIERS[i];
+    this.resize();
+    this.onTier(this.tier);
+  }
+
+  get tierPinned() { return this.governor.locked; }
+
   constructor(readonly canvas: HTMLCanvasElement, initialView: View) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance', alpha: false });
     this.renderer.outputColorSpace = THREE.LinearSRGBColorSpace; // colours are authored as display values, like the lens
     this.device = detectDevice(this.renderer.getContext() as WebGL2RenderingContext);
     const t0 = initialTier(this.device);
     this.tier = TIERS[t0];
-    this.governor = new FrameGovernor(t0, Math.min(3, t0 + 1), (t) => { this.tier = TIERS[t]; this.resize(); });
+    this.governor = new FrameGovernor(t0, Math.min(3, t0 + 1), (t) => { this.tier = TIERS[t]; this.resize(); this.onTier(this.tier); });
 
     this.globe = new GlobeCamera(canvas, initialView, this.device.reducedMotion);
 

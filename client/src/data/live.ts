@@ -5,7 +5,8 @@ import type { WireVehicle } from '../layers/vehicles.ts';
 type Handlers = {
   vehicles(city: string, v: WireVehicle[], snapshot: boolean): void;
   gone(city: string, keys: string[]): void;
-  stats(total: number, scheduled: number, perCity: Record<string, { live: number; scheduled: number }>): void;
+  /** World totals, live feeds reporting, and [live, scheduled] for each place with anything running. */
+  stats(total: number, scheduled: number, feeds: number, perCity: Record<string, [number, number]>): void;
 };
 
 export class LiveClient {
@@ -34,6 +35,11 @@ export class LiveClient {
     if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify({ type: 'unsub', city }));
   }
 
+  /** Ask the server to prepare a place's timetable next (the camera is heading there). */
+  want(city: string) {
+    if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify({ type: 'want', city }));
+  }
+
   private sync(serverNow: number) {
     const o = serverNow - Date.now() / 1000;
     // Network delay only ever makes the server look behind, so keep the largest offset seen, eased.
@@ -50,7 +56,7 @@ export class LiveClient {
       if (typeof m.now === 'number') this.sync(m.now);
       if (m.type === 'snap' || m.type === 'veh') this.h.vehicles(m.city, m.v, m.type === 'snap');
       else if (m.type === 'gone') this.h.gone(m.city, m.keys);
-      else if (m.type === 'stats') this.h.stats(m.total, m.scheduled ?? 0, m.cities);
+      else if (m.type === 'stats') this.h.stats(m.total, m.scheduled ?? 0, m.feeds ?? 0, m.cities);
     };
     ws.onclose = () => {
       setTimeout(() => this.connect(), Math.min(30, this.retry) * 1000);

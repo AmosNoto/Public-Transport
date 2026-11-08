@@ -51,22 +51,39 @@ const GLOW_WEIGHT: Record<Mode, number> = { subway: 1, tram: 0.85, rail: 0.8, bu
  * Fetch a URL through a disk cache. A fresh copy is used as-is; a stale one is revalidated
  * with If-Modified-Since, and kept if the network fails.
  */
-export async function fetchCached(url: string, file: string, maxAgeS: number, headers: Record<string, string> = {}): Promise<Buffer> {
+export class TooLargeError extends Error {}
+
+/** Read a response body, refusing more than `maxBytes` (also when no Content-Length is sent). */
+async function readCapped(res: Response, maxBytes: number): Promise<Buffer> {
+  const len = Number(res.headers.get('content-length'));
+  const mb = (n: number) => `${(n / 1e6).toFixed(0)} MB`;
+  if (len > maxBytes) { res.body?.cancel().catch(() => {}); throw new TooLargeError(`timetable is ${mb(len)}, over the ${mb(maxBytes)} limit (MAX_STATIC_MB)`); }
+  const chunks: Uint8Array[] = [];
+  let n = 0;
+  for await (const c of res.body as unknown as AsyncIterable<Uint8Array>) {
+    n += c.byteLength;
+    if (n > maxBytes) throw new TooLargeError(`timetable is over the ${mb(maxBytes)} limit (MAX_STATIC_MB)`);
+    chunks.push(c);
+  }
+  return Buffer.concat(chunks, n);
+}
+
+export async function fetchCached(url: string, file: string, maxAgeS: number, headers: Record<string, string> = {}, maxBytes = Infinity): Promise<Buffer> {
   const st = await fs.stat(file).catch(() => null);
   if (st && Date.now() - st.mtimeMs < maxAgeS * 1000) return fs.readFile(file);
   try {
     const h: Record<string, string> = { 'User-Agent': config.userAgent, ...headers };
     if (st) h['If-Modified-Since'] = st.mtime.toUTCString();
-    const res = await fetch(url, { headers: h });
+    const res = await fetch(url, { headers: h, signal: AbortSignal.timeout(10 * 60_000) });
     if (st && res.status === 304) { const now = new Date(); await fs.utimes(file, now, now); return fs.readFile(file); }
     if (!res.ok) throw new Error(`GET ${url}: HTTP ${res.status}`);
-    const buf = Buffer.from(await res.arrayBuffer());
+    const buf = await readCapped(res, maxBytes);
     await fs.mkdir(path.dirname(file), { recursive: true });
     await fs.writeFile(file + '.part', buf);
     await fs.rename(file + '.part', file);
     return buf;
   } catch (e) {
-    if (st) return fs.readFile(file);
+    if (st && !(e instanceof TooLargeError)) return fs.readFile(file);
     throw e;
   }
 }
@@ -377,25 +394,121 @@ async function readCache(dir: string, city: CityDef): Promise<CityIndex | null> 
   }
 }
 
-/** Build (or load from cache) a city's static index. Downloads feeds that are missing or stale. */
-export async function buildCity(city: CityDef): Promise<CityIndex> {
+/** What the server keeps about a built city while its full index isn't loaded. */
+export interface CitySummary {
+  /** Cache directory holding the full index. */
+  dir: string;
+  origin: { lon: number; lat: number };
+  tz: string;
+  bbox: [number, number, number, number];
+  routes: number;
+  shapes: number;
+  trips: number;
+  /** Total timetable download size (bytes). */
+  bytes: number;
+  builtAt: number;
+  /** Last time the timetable was confirmed current (a rebuild, or a revalidation that found no change). */
+  checkedAt?: number;
+}
+
+const summaryFile = (cityId: string) => path.join(config.cacheDir, 'built', cityId, 'current.json');
+
+/** The last successful build of a city, if any (instant at startup; the crawl revalidates it). */
+export async function readSummary(cityId: string): Promise<CitySummary | null> {
+  try {
+    const s: CitySummary = JSON.parse(await fs.readFile(summaryFile(cityId), 'utf8'));
+    await fs.access(path.join(s.dir, 'meta.json'));
+    return s;
+  } catch { return null; }
+}
+
+/** Median stop position and the agency's time zone, for places discovered from the catalog. */
+function placeOf(zips: Uint8Array[]): { origin: { lon: number; lat: number }; tz: string | null } {
+  const lats: number[] = [], lons: number[] = [];
+  let tz: string | null = null;
+  for (const zip of zips) {
+    let iLat = -1, iLon = -1;
+    zipCsv(zip, 'stops.txt', (col) => { iLat = col('stop_lat'); iLon = col('stop_lon'); }, (f) => {
+      const la = Number(f[iLat]), lo = Number(f[iLon]);
+      if (Number.isFinite(la) && Number.isFinite(lo) && (la !== 0 || lo !== 0) && Math.abs(la) <= 90 && Math.abs(lo) <= 180) { lats.push(la); lons.push(lo); }
+    });
+    if (!tz) {
+      for (const a of zipRows(zip, 'agency.txt')) {
+        const z = a.agency_timezone?.trim();
+        if (z) { try { new Intl.DateTimeFormat('en', { timeZone: z }); tz = z; break; } catch { /* not a valid zone */ } }
+      }
+    }
+  }
+  if (!lats.length) throw new Error('timetable has no stops with coordinates');
+  const med = (a: number[]) => { a.sort((x, y) => x - y); return a[a.length >> 1]; };
+  return { origin: { lon: Math.round(med(lons) * 1e5) / 1e5, lat: Math.round(med(lats) * 1e5) / 1e5 }, tz };
+}
+
+/**
+ * Download (or revalidate) a city's timetables and build its index, or reuse the cached build
+ * when the files haven't changed. Runs in the build worker; returns only the summary.
+ * For discovered places this also settles `city.origin` and `city.tz` from the timetable.
+ */
+export async function prepareCity(city: CityDef): Promise<CitySummary> {
   const zips: Uint8Array[] = [];
-  const stamp: unknown[] = [BUILD_VERSION, city.origin];
+  const hashes: unknown[] = [];
+  let bytes = 0;
   for (const feed of city.feeds) {
     const file = staticZipPath(city.id, feed.id);
-    const buf = await fetchCached(feed.static, file, 24 * 3600, feed.staticHeaders);
+    let buf: Buffer;
+    try {
+      buf = await fetchCached(feed.static, file, 24 * 3600, feed.staticHeaders, feed.maxBytes);
+    } catch (e) {
+      if (!feed.staticAlt || e instanceof TooLargeError) throw e;
+      buf = await fetchCached(feed.staticAlt, file, 24 * 3600, feed.staticHeaders, feed.maxBytes);
+    }
+    bytes += buf.byteLength;
     zips.push(new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength));
     // Content hash, not mtime: a daily revalidation that returns 304 must not force a rebuild.
-    stamp.push(feed.id, feed.static, crypto.createHash('sha1').update(buf).digest('hex'), feed.filter ?? null);
+    hashes.push(feed.id, feed.static, crypto.createHash('sha1').update(buf).digest('hex'), feed.filter ?? null);
   }
-  const key = crypto.createHash('sha1').update(JSON.stringify(stamp)).digest('hex').slice(0, 16);
-  const dir = path.join(config.cacheDir, 'built', city.id, key);
-  const cached = await readCache(dir, city);
-  if (cached) return cached;
-  const ix = await buildFresh(city, zips);
-  await writeCache(dir, ix);
+  if (city.auto) {
+    const p = placeOf(zips);
+    city.origin = p.origin;
+    city.tz = p.tz ?? 'UTC';
+  }
+  const key = crypto.createHash('sha1').update(JSON.stringify([BUILD_VERSION, city.origin, ...hashes])).digest('hex').slice(0, 16);
+  const parent = path.join(config.cacheDir, 'built', city.id);
+  const dir = path.join(parent, key);
+  let summary: CitySummary | null = null;
+  try {
+    const s: CitySummary = JSON.parse(await fs.readFile(summaryFile(city.id), 'utf8'));
+    if (s.dir === dir) {
+      await fs.access(path.join(dir, 'meta.json'));
+      summary = { ...s, checkedAt: Date.now() / 1000 };
+      await fs.writeFile(summaryFile(city.id), JSON.stringify(summary));
+    }
+  } catch { /* none yet */ }
+  if (!summary) {
+    let ix = await readCache(dir, city);
+    if (!ix) { ix = await buildFresh(city, zips); await writeCache(dir, ix); }
+    summary = {
+      dir, origin: city.origin, tz: city.tz, bbox: ix.bbox, routes: ix.routes.length, shapes: ix.shapes.length,
+      trips: ix.tripRoute.size, bytes, builtAt: Date.now() / 1000, checkedAt: Date.now() / 1000,
+    };
+    await fs.writeFile(summaryFile(city.id), JSON.stringify(summary));
+  }
   // Remove older builds of this city.
-  const parent = path.dirname(dir);
-  for (const d of await fs.readdir(parent)) if (d !== key) await fs.rm(path.join(parent, d), { recursive: true, force: true });
+  for (const d of await fs.readdir(parent, { withFileTypes: true })) {
+    if (d.isDirectory() && d.name !== key) await fs.rm(path.join(parent, d.name), { recursive: true, force: true });
+  }
+  return summary;
+}
+
+/** Load a built city's full index from its cache (main thread; a few hundred ms at most). */
+export async function loadIndex(city: CityDef, s: CitySummary): Promise<CityIndex> {
+  const ix = await readCache(s.dir, city);
+  if (!ix) throw new Error(`build cache missing for ${city.id}`);
   return ix;
+}
+
+/** The globe glow samples of a built city, straight from its cache. */
+export async function readGlow(s: CitySummary): Promise<Float32Array> {
+  const b = await fs.readFile(path.join(s.dir, 'glow.bin'));
+  return new Float32Array(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength));
 }

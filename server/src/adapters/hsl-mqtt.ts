@@ -27,8 +27,8 @@ export function hslMqttAdapter(): SourceAdapter {
   return {
     kind: 'hsl-mqtt',
     start(ctx: AdapterContext) {
-      const rt = ctx.feed.realtime;
-      if (!rt || rt.kind !== 'hsl-mqtt') return;
+      const rt = ctx.source;
+      if (rt.kind !== 'hsl-mqtt' || !rt.topic) return;
       const proxy = process.env.HTTPS_PROXY || process.env.https_proxy;
       client = mqtt.connect(rt.url, {
         clientId: `afterglow-${Math.random().toString(16).slice(2, 10)}`,
@@ -36,7 +36,7 @@ export function hslMqttAdapter(): SourceAdapter {
         wsOptions: proxy ? { agent: new HttpsProxyAgent(proxy) } : undefined,
       });
       client.on('connect', () => {
-        client!.subscribe(rt.topic, { qos: 0 });
+        client!.subscribe(rt.topic!, { qos: 0 });
         ctx.health({ state: lastMessage ? 'ok' : 'starting', detail: 'connected', lastPoll: Date.now() / 1000 });
       });
       client.on('error', (e) => { failures++; ctx.health({ state: 'network-error', detail: e.message.slice(0, 120), failures }); });

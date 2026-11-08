@@ -19,6 +19,8 @@ export class Hud {
   private idleTimer = 0;
   private cities: CityInfo[] = [];
   private focusedId: string | null = null;
+  /** Places on the visible side of the globe (credits on the globe list only these). */
+  private inView = new Set<string>();
   /** Called when the user picks a city in the switcher. */
   onPick: (id: string) => void = () => {};
 
@@ -39,7 +41,7 @@ export class Hud {
       };
       row.appendChild(b);
     }
-    this.el('credits-btn').onclick = () => this.el('credits').toggleAttribute('hidden');
+    this.el('credits-btn').onclick = () => { this.el('credits').toggleAttribute('hidden'); this.renderCredits(); };
 
     // City switcher.
     const sw = this.el('switcher'), input = this.el('city-search') as HTMLInputElement;
@@ -88,29 +90,37 @@ export class Hud {
     const q = (this.el('city-search') as HTMLInputElement).value.trim().toLowerCase();
     const list = this.el('city-list');
     list.innerHTML = '';
+    const words = q.split(/\s+/).filter(Boolean);
     const items = this.cities
-      .filter((c) => !q || c.name.toLowerCase().includes(q) || c.country.toLowerCase().includes(q))
-      .sort((a, b) => a.name.localeCompare(b.name));
+      .filter((c) => { const h = `${c.name} ${c.region} ${c.country}`.toLowerCase(); return words.every((w) => h.includes(w)); })
+      .sort((a, b) => (b.live + b.scheduled > 0 ? 1 : 0) - (a.live + a.scheduled > 0 ? 1 : 0) || a.name.localeCompare(b.name))
+      .slice(0, 150);
     for (const c of items) {
       const li = document.createElement('li');
       const b = document.createElement('button');
       const time = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: c.tz }).format(new Date());
-      const n = c.live ? `${fmt(c.live)} live` : c.scheduled ? `${fmt(c.scheduled)} sched.` : c.state === 'ready' ? 'quiet' : 'loading';
+      const n = c.live ? `${fmt(c.live)} live` : c.scheduled ? `${fmt(c.scheduled)} sched.` : c.state !== 'ready' ? 'not built yet' : c.timetableOnly ? 'timetable' : 'quiet';
       b.innerHTML = `<span class="cn"></span><span class="cc"></span><span class="ct mono">${time}</span><span class="cv mono">${n}</span>`;
       (b.querySelector('.cn') as HTMLElement).textContent = c.name;
-      (b.querySelector('.cc') as HTMLElement).textContent = c.country;
-      b.disabled = c.state !== 'ready';
+      (b.querySelector('.cc') as HTMLElement).textContent = [c.region, c.country].filter(Boolean).join(' · ');
       b.onclick = () => { this.closeSwitcher(); this.onPick(c.id); };
       li.appendChild(b);
       list.appendChild(li);
     }
-    if (!items.length) list.innerHTML = '<li class="empty">No matching city yet</li>';
+    if (!items.length) list.innerHTML = '<li class="empty">No matching place</li>';
   }
 
   setCities(c: CityInfo[]) {
     this.cities = c;
     if (!this.el('switcher').hasAttribute('hidden')) this.renderList();
     this.renderCredits();
+  }
+
+  /** Places currently visible on the globe; updates the credits if the panel is open. */
+  setInView(ids: Set<string>) {
+    const same = ids.size === this.inView.size && [...ids].every((i) => this.inView.has(i));
+    this.inView = ids;
+    if (!same && !this.el('credits').hasAttribute('hidden')) this.renderCredits();
   }
 
   /** The city the view is in, or null on the globe. */
@@ -128,7 +138,7 @@ export class Hud {
     const focused = this.cities.find((c) => c.id === this.focusedId);
     const credits: Credit[] = [];
     const seen = new Set<string>();
-    for (const c of focused ? [focused] : this.cities) for (const a of c.attribution) {
+    for (const c of focused ? [focused] : this.cities.filter((x) => this.inView.has(x.id))) for (const a of c.attribution) {
       if (seen.has(a.name)) continue;
       seen.add(a.name); credits.push(a);
     }
@@ -149,6 +159,13 @@ export class Hud {
     const lg = this.el('legend');
     lg.textContent = legend;
     lg.hidden = !legend;
+  }
+
+  /** A line under the clock: what's happening with the place in view (or nothing). */
+  setStatus(text: string) {
+    const el = this.el('city-status');
+    if (el.textContent !== text) el.textContent = text;
+    el.hidden = !text;
   }
 
   setCounts(cityLive: number | null, citySched: number, worldLive: number, worldSched: number) {

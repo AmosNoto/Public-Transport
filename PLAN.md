@@ -1,4 +1,4 @@
-# Afterglow: plan (awaiting approval)
+# Afterglow: plan
 
 Status: research done, no app code written yet. Everything below marked **verified** was checked live from this session on 2026-11-07. Anything marked **to verify** gets checked live before I rely on it.
 
@@ -112,4 +112,6 @@ The repo will always have one-command `npm run dev` (server + client), `README.m
 
 - **Milestone 1 — one city, end to end:** done (Boston): live and scheduled vehicles, GPU motion, photons, selective bloom.
 - **Milestone 2 — globe + several cities:** done. One continuous globe-to-map camera, real day/night, city glows, tiled water basemap, searchable city switcher. Cities: Boston, Toronto (+ scheduled subway), Seattle (+ live Link), Brisbane, Helsinki (MQTT, ~1 Hz), Amsterdam (national OVapi feed, Amsterdam area), Oslo (scheduled; Ruter publishes no open positions). All keyless; licences verified per feed. Streaming GTFS processing with a disk cache handles national feeds.
-- Next: milestone 3 (global catalog discovery, finer region streaming, KEYS.md for keyed feeds), then milestone 4 (time-lapse, auto-tour, themes, interactive mode).
+- **Milestone 3 — global catalog:** done, with the gaps listed below. Places are discovered from the Mobility Database (every active vehicle-positions feed linked to a timetable; ~300 places, 275 built in testing across 21 countries). Timetables are built lazily in a worker thread, busiest first, cached and revalidated daily. Every live feed is polled from startup (slowly while unwatched), and a place's full index is loaded only while someone views it. There is a `#diagnostics` view (feed health, builds, keys, skipped feeds, quality override). `KEYS.md` is generated from the catalog (`npm run keys`).
+  - Not done: **Transitland** (needs a key to verify; not wired in). **Finer region streaming inside national feeds**: a place is still one agency timetable, so whole-country feeds over `MAX_STATIC_MB` (Norway's national feed, NSW) are skipped rather than split into regions. **Keyed feeds** are listed from the catalog but untested (no keys here). Realtime feeds with no linked timetable (~30) aren't shown.
+- Next: milestone 4 (time-lapse, auto-tour, themes, interactive mode).
