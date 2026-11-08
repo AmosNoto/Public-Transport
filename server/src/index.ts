@@ -15,6 +15,7 @@ import { discover, CATALOG_ATTRIBUTION, type Discovery } from './catalog/mobilit
 import { readGlow, type CityIndex } from './static/gtfs.ts';
 import { waterTile, BASEMAP_ATTRIBUTION, MAX_WATER_ZOOM } from './static/basemap.ts';
 import { toWire, type VehicleState } from './live.ts';
+import { toRel } from './geo.ts';
 import { Places, type Place } from './places.ts';
 
 function send(p: Place, msg: object) {
@@ -74,7 +75,7 @@ app.get('/api/cities', async () => {
   const now = Date.now() / 1000;
   return [...places.all.values()].filter((p) => p.located && p.state !== 'skipped').map((p) => ({
     id: p.def.id, name: p.def.name, region: p.def.region ?? '', country: p.def.country, tz: p.def.tz, origin: p.def.origin,
-    bbox: p.summary?.bbox ?? null, state: p.state, error: p.error ?? null, ...counts(p, now),
+    bbox: p.area, state: p.state, error: p.error ?? null, ...counts(p, now),
     source: p.def.source, timetableOnly: !hasUsableLive(p), v: p.summary ? Math.round(p.summary.builtAt) : 0,
     attribution: attribution(p),
   }));
@@ -122,7 +123,16 @@ const GLOW_MAX = 1000;
 
 async function glowBin(p: Place): Promise<Buffer> {
   if (p.glowBin) return p.glowBin;
-  const all = await readGlow(p.summary!);
+  let all = await readGlow(p.summary!);
+  // Keep the glow to the place's area (with a margin), so a metro cut from a national feed
+  // doesn't glow along every intercity line that passes through it.
+  if (p.area && p.def.feeds.every((f) => f.filter?.bbox)) {
+    const [w, sth, e, n] = p.area, mx = (e - w) * 0.25, my = (n - sth) * 0.25;
+    const [x0, y0] = toRel(p.def.origin, w - mx, sth - my), [x1, y1] = toRel(p.def.origin, e + mx, n + my);
+    const keep: number[] = [];
+    for (let i = 0; i < all.length; i += 5) if (all[i] >= x0 && all[i] <= x1 && all[i + 1] >= y0 && all[i + 1] <= y1) keep.push(...all.subarray(i, i + 5));
+    all = Float32Array.from(keep);
+  }
   // Samples run along the network, so an even stride keeps them spread over all of it.
   const total = all.length / 5, n = Math.min(total, GLOW_MAX);
   const g = new Float32Array(n * 5);

@@ -57,6 +57,9 @@ export class Place {
   glowBin?: Buffer;
   waiters: (() => void)[] = [];
   private box: [number, number, number, number] | null = null;
+  /** The area the place covers: its feeds' filter box when every feed is filtered (a national feed
+   *  narrowed to one metro, whose routes may still run far beyond it), else the timetable's extent. */
+  area: [number, number, number, number] | null = null;
 
   constructor(readonly def: CityDef) {}
 
@@ -70,6 +73,7 @@ export class Place {
     // Count raw vehicles inside the area the place draws (curated filters narrow national feeds).
     const filt = this.def.feeds.map((f) => f.filter?.bbox).filter(Boolean) as [number, number, number, number][];
     const b = filt.length === this.def.feeds.length && filt.length ? filt.reduce((a, x) => [Math.min(a[0], x[0]), Math.min(a[1], x[1]), Math.max(a[2], x[2]), Math.max(a[3], x[3])]) : s.bbox;
+    this.area = b;
     this.box = [b[0] - 0.02, b[1] - 0.02, b[2] + 0.02, b[3] + 0.02];
     this.glowBin = undefined;
   }
