@@ -73,3 +73,10 @@ body.idle #gl { cursor: none; }
 }
 #credits ul { margin: 6px 0 0; padding: 0; list-style: none; display: grid; gap: 4px; }
 #credits a { color: var(--muted); }
+
+#debug {
+  position: fixed; z-index: 3; top: max(16px, env(safe-area-inset-top, 0px)); right: max(16px, env(safe-area-inset-right, 0px));
+  margin: 0; padding: 8px 10px; font: 11px/1.5 var(--f-mono); font-variant-numeric: tabular-nums; color: var(--muted);
+  background: var(--panel); border: 1px solid var(--line-soft); border-radius: 8px;
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); pointer-events: none; white-space: pre;
+}

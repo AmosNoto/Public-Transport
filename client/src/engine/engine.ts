@@ -47,7 +47,6 @@ export class Engine {
   private orthoCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
   private governor: FrameGovernor;
   private lastFrame = 0;
-  private lastDraw = 0;
   private hooks: ((dt: number, now: number) => void)[] = [];
   focus = { lon: 0, lat: 0 };
 
@@ -164,18 +163,32 @@ export class Engine {
 
   onFrame(fn: (dt: number, now: number) => void) { this.hooks.push(fn); }
 
+  /** Measured display refresh interval (ms) and recent drawn-frame statistics. */
+  readonly stats = { refreshMs: 16.7, frameMs: 16.7, fps: 60, divisor: 1 };
+
   start() {
+    let tick = 0, prevRaf = 0;
     const loop = (now: number) => {
       requestAnimationFrame(loop);
-      const minGap = 1000 / this.tier.fpsCap - 1;
-      if (now - this.lastDraw < minGap) return;
+      // Track the display's refresh interval, then draw every Nth refresh so frames stay
+      // evenly spaced at or near the tier's cap on any display (60, 90, 120, 144, 165 Hz…).
+      const gap = now - (prevRaf || now);
+      prevRaf = now;
+      if (gap > 2 && gap < 50) this.stats.refreshMs += (gap - this.stats.refreshMs) * 0.05;
+      const divisor = Math.max(1, Math.round(1000 / this.tier.fpsCap / this.stats.refreshMs));
+      this.stats.divisor = divisor;
+      if (tick++ % divisor !== 0) return;
+
       const raw = (now - (this.lastFrame || now)) / 1000;
       const dt = Math.min(0.1, raw);
       this.lastFrame = now;
-      this.lastDraw = now;
-      // Frame interval measures CPU + GPU (the GPU paces requestAnimationFrame). Gaps from a
-      // hidden tab or a stall are not a quality signal.
-      if (raw > 0 && raw < 0.25) this.governor.frame(raw * 1000);
+      if (raw > 0 && raw < 0.25) {
+        // Frame interval measures CPU + GPU (the GPU paces requestAnimationFrame). Gaps from a
+        // hidden tab or a stall are not a quality signal.
+        this.governor.frame(raw * 1000, this.stats.refreshMs * divisor);
+        this.stats.frameMs += (raw * 1000 - this.stats.frameMs) * 0.1;
+        this.stats.fps = 1000 / this.stats.frameMs;
+      }
       this.controls.update();
       const dist = this.camera.position.distanceTo(this.controls.target);
       this.camera.near = Math.max(1, dist * 0.02);

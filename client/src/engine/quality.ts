@@ -70,14 +70,15 @@ export class FrameGovernor {
   private goodSince = performance.now();
   constructor(public tier: number, private readonly ceiling: number, private readonly onChange: (t: number) => void) {}
 
-  frame(ms: number) {
-    this.samples.push(ms);
+  /** `ms`: time between drawn frames; `targetMs`: the interval this tier aims for on this display. */
+  frame(ms: number, targetMs: number) {
+    this.samples.push(ms / targetMs);
     if (this.samples.length < 90) return;
     const sorted = [...this.samples].sort((a, b) => a - b);
     const p75 = sorted[Math.floor(sorted.length * 0.75)];
     this.samples.length = 0;
     const now = performance.now();
-    const budget = 1000 / Math.min(60, TIERS[this.tier].fpsCap);
+    const budget = 1; // samples are ratios of actual to target frame interval
     if (p75 > budget * 1.35 && this.tier > 0 && now - this.lastChange > 3000) {
       this.set(this.tier - 1, now);
     } else if (p75 < budget * 0.6) {

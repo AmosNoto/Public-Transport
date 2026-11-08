@@ -34,6 +34,8 @@ interface Slot {
   dF: number; v: number; tF: number;
   err: number; tC: number; hold: number; born: number;
   rx: number; ry: number;
+  /** Unsnapped vehicles: where the glide starts, and how long it takes (s). */
+  px: number; py: number; glide: number;
   stopped: boolean;
   scheduled: boolean;
 }
@@ -77,7 +79,9 @@ export class Vehicles {
         const float HORIZON = ${HORIZON.toFixed(1)}, EASE = ${EASE.toFixed(1)}, HOLD_MAX = ${HOLD_MAX.toFixed(1)};
         void main() {
           vec4 rs = routeState(aC.z);
-          vec2 rel = aC.xy;
+          // Not on a known line: glide in a straight line from where it was drawn to its latest
+          // reported position, over about one update interval, so it moves continuously.
+          vec2 rel = mix(vec2(aB.x, aB.w), aC.xy, clamp((uTime - aB.y) / max(aA.z, 0.5), 0.0, 1.0));
           if (aA.x >= 0.0) {
             vec4 info = shapeInfo(aA.x);
             float target = aA.y + aA.z * clamp(uTime - aA.w, 0.0, HORIZON);
@@ -129,8 +133,9 @@ export class Vehicles {
 
   private write(s: Slot) {
     const A = this.aA.array as Float32Array, B = this.aB.array as Float32Array, C = this.aC.array as Float32Array, i = s.i * 4;
-    A[i] = s.shape; A[i + 1] = s.dF; A[i + 2] = s.stopped ? 0 : s.v; A[i + 3] = s.tF;
-    B[i] = s.err; B[i + 1] = s.tC; B[i + 2] = s.born; B[i + 3] = s.hold;
+    const free = s.shape < 0;
+    A[i] = s.shape; A[i + 1] = s.dF; A[i + 2] = free ? s.glide : s.stopped ? 0 : s.v; A[i + 3] = s.tF;
+    B[i] = free ? s.px : s.err; B[i + 1] = s.tC; B[i + 2] = s.born; B[i + 3] = free ? s.py : s.hold;
     C[i] = s.rx; C[i + 1] = s.ry; C[i + 2] = s.route; C[i + 3] = (s.stopped ? FLAG_STOPPED : 0) + (s.scheduled ? FLAG_SCHEDULED : 0);
   }
 
@@ -145,7 +150,7 @@ export class Vehicles {
       if (!s) {
         let i = this.free.pop();
         if (i === undefined) { if (this.count >= this.cap) this.grow(this.cap * 2); i = this.count++; }
-        s = { key, i, route, shape, dF: d, v, tF, err: 0, tC: now, hold: d, born: now, rx, ry, stopped, scheduled };
+        s = { key, i, route, shape, dF: d, v, tF, err: 0, tC: now, hold: d, born: now, rx, ry, px: rx, py: ry, glide: 1, stopped, scheduled };
         this.slots.set(key, s);
       } else if (s.shape === shape && shape >= 0) {
         const len = this.city.shapes[shape].length;
@@ -154,9 +159,17 @@ export class Vehicles {
         const err = shown - target;
         Object.assign(s, { route, dF: d, v, tF, rx, ry, stopped, scheduled, tC: now, hold: shown });
         if (Math.abs(err) > JUMP) { s.err = 0; s.born = now; } else s.err = err;
+      } else if (s.shape < 0 && shape < 0) {
+        // Still off any known line: glide from where it's drawn now to the new position.
+        const k = Math.min(1, Math.max(0, (now - s.tC) / Math.max(s.glide, 0.5)));
+        const sx = s.px + (s.rx - s.px) * k, sy = s.py + (s.ry - s.py) * k;
+        const jump = Math.hypot(rx - sx, ry - sy) * 6.371e6; // metres, roughly
+        const glide = Math.min(15, Math.max(3, tF - s.tF));
+        Object.assign(s, { route, dF: d, v, tF, rx, ry, stopped, scheduled, tC: now, px: sx, py: sy, glide });
+        if (jump > JUMP * 4) { s.px = rx; s.py = ry; s.born = now; }
       } else {
-        // New trip, or no shape: start fresh, fading in where it is.
-        Object.assign(s, { route, shape, dF: d, v, tF, rx, ry, stopped, scheduled, err: 0, tC: now, hold: d, born: now });
+        // New trip, or moving on/off a line: start fresh, fading in where it is.
+        Object.assign(s, { route, shape, dF: d, v, tF, rx, ry, px: rx, py: ry, glide: 1, stopped, scheduled, err: 0, tC: now, hold: d, born: now });
       }
       this.write(s);
     }

@@ -69,6 +69,23 @@ async function main() {
     photons.tick(dt, engine.metresPerPixel(), engine.device.reducedMotion);
   });
   engine.start();
+
+  // ?debug: a small readout of frame rate, display refresh, quality tier and GPU.
+  if (new URLSearchParams(location.search).has('debug')) {
+    const el = document.createElement('pre');
+    el.id = 'debug';
+    document.body.appendChild(el);
+    setInterval(() => {
+      const st = engine.stats, act = vehicles.activity(live.now());
+      el.textContent = [
+        `${st.fps.toFixed(0)} fps  (${st.frameMs.toFixed(1)} ms/frame)`,
+        `display ${(1000 / st.refreshMs).toFixed(0)} Hz, drawing every ${st.divisor === 1 ? 'refresh' : st.divisor + ' refreshes'}`,
+        `quality ${engine.tier.name}  dpr ${u.uDpr.value}`,
+        `live ${act.total}  scheduled ${act.scheduled}`,
+        engine.device.gpu.slice(0, 60),
+      ].join('\n');
+    }, 500);
+  }
   (window as unknown as { afterglow: unknown }).afterglow = { engine, city, vehicles, live, THREE };
 }
 

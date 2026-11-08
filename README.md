@@ -17,6 +17,7 @@ npm run dev
 Open http://localhost:5173. The first start downloads MBTA's timetable (~23 MB) and basemap tiles, then caches them in `data/cache/`.
 
 - `?quality=low|medium|high|ultra` overrides the automatic quality tier.
+- `?debug` shows frame rate, display refresh rate, quality tier and GPU.
 - `/api/health` lists every feed's status and whether it is showing live or scheduled vehicles.
 
 ## Live or scheduled

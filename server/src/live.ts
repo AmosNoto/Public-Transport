@@ -44,7 +44,15 @@ export function toWire(s: VehicleState): WireVehicle {
 
 export class LiveCity {
   readonly vehicles = new Map<string, VehicleState>();
-  constructor(readonly idx: CityIndex) {}
+  /** Shape indices per route, for trips the timetable doesn't know (added or detoured trips). */
+  private routeShapes = new Map<number, number[]>();
+  constructor(readonly idx: CityIndex) {
+    idx.shapes.forEach((sh, i) => {
+      let a = this.routeShapes.get(sh.route);
+      if (!a) this.routeShapes.set(sh.route, (a = []));
+      a.push(i);
+    });
+  }
 
   /** Apply a batch of fixes; returns the vehicles that changed. */
   apply(fixes: VehicleFix[]): VehicleState[] {
@@ -58,16 +66,27 @@ export class LiveCity {
       let route = f.tripId !== undefined ? ix.tripRoute.get(`${f.feed}:${f.tripId}`) : undefined;
       if (route === undefined && f.routeId) route = ix.routeIdx.get(`${f.feed}:${f.routeId}`);
       if (route === undefined) continue; // unknown route: nothing honest to colour it with
-      let shape = f.tripId !== undefined ? ix.tripShape.get(`${f.feed}:${f.tripId}`) : undefined;
-      if (shape === undefined && f.routeId !== undefined) shape = ix.defaultShape.get(`${f.feed}:${f.routeId}:${f.directionId ?? 0}`);
+      const tripShape = f.tripId !== undefined ? ix.tripShape.get(`${f.feed}:${f.tripId}`) : undefined;
+      // Candidate shapes: the trip's own; otherwise (trips added or changed in real time) the
+      // shape it was on last time, the route's usual shape for its direction, then any shape
+      // of the route. The first one within snapping distance wins, so it doesn't flip between
+      // overlapping variants.
+      let cands: number[];
+      if (tripShape !== undefined) cands = [tripShape];
+      else {
+        const dflt = f.routeId !== undefined ? ix.defaultShape.get(`${f.feed}:${f.routeId}:${f.directionId ?? 0}`) : undefined;
+        const all = (this.routeShapes.get(route) ?? []).slice();
+        cands = [...new Set([...(prev && prev.route === route && prev.shape >= 0 ? [prev.shape] : []), ...(dflt !== undefined ? [dflt] : []), ...all])];
+      }
 
       const mode = ix.routes[route].mode;
       let d = 0, flags = f.stopped ? FLAG_STOPPED : 0;
-      if (shape !== undefined) {
-        const sameShape = prev && prev.shape === shape;
+      let shape: number | undefined;
+      for (const c of cands) {
+        const sameShape = prev && prev.shape === c;
         const hint = sameShape ? prev.d + prev.v * Math.min(60, f.ts - prev.ts) : undefined;
-        const p = projectOnto(ix.polylines[shape], f.lat, f.lon, hint);
-        if (p.off <= SNAP_MAX_M) { d = p.d; flags |= FLAG_SNAPPED; } else shape = undefined;
+        const p = projectOnto(ix.polylines[c], f.lat, f.lon, hint);
+        if (p.off <= SNAP_MAX_M) { shape = c; d = p.d; flags |= FLAG_SNAPPED; break; }
       }
 
       let v: number;
