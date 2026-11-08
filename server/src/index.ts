@@ -14,6 +14,7 @@ import { buildCity, type CityIndex } from './static/gtfs.ts';
 import { buildWater, BASEMAP_ATTRIBUTION } from './static/basemap.ts';
 import { LiveCity, toWire, type VehicleState } from './live.ts';
 import { gtfsRtAdapter } from './adapters/gtfs-rt.ts';
+import { FeedFallback, FORCED } from './fallback.ts';
 import type { SourceAdapter } from './adapters/types.ts';
 import type { CityDef, FeedHealth } from './types.ts';
 
@@ -25,6 +26,7 @@ interface CityRuntime {
   index?: CityIndex;
   water?: Float32Array;
   live?: LiveCity;
+  fallbacks: FeedFallback[];
   adapters: SourceAdapter[];
   subscribers: Set<WebSocket>;
   error?: string;
@@ -33,6 +35,12 @@ interface CityRuntime {
 const health = new Map<string, FeedHealth>();
 const cities = new Map<string, CityRuntime>();
 
+function sendGone(rt: CityRuntime, keys: string[]) {
+  if (!keys.length || !rt.subscribers.size) return;
+  const msg = JSON.stringify({ type: 'gone', city: rt.def.id, now: Date.now() / 1000, keys });
+  for (const ws of rt.subscribers) if (ws.readyState === 1) ws.send(msg);
+}
+
 function broadcast(rt: CityRuntime, changed: VehicleState[]) {
   if (!changed.length || !rt.subscribers.size) return;
   const msg = JSON.stringify({ type: 'veh', city: rt.def.id, now: Date.now() / 1000, v: changed.map(toWire) });
@@ -40,7 +48,7 @@ function broadcast(rt: CityRuntime, changed: VehicleState[]) {
 }
 
 function startCity(def: CityDef): CityRuntime {
-  const rt: CityRuntime = { def, adapters: [], subscribers: new Set(), ready: Promise.resolve() };
+  const rt: CityRuntime = { def, adapters: [], fallbacks: [], subscribers: new Set(), ready: Promise.resolve() };
   for (const f of def.feeds) health.set(f.id, { feed: f.id, city: def.id, state: 'starting', vehicles: 0, polls: 0, failures: 0 });
   rt.ready = (async () => {
     const t0 = Date.now();
@@ -48,8 +56,9 @@ function startCity(def: CityDef): CityRuntime {
     console.log(`[static] ${def.id}: ${rt.index.routes.length} routes, ${rt.index.shapes.length} shapes, ${rt.index.points.length / 4} shape vertices, ${rt.index.lineChains.length / 3} line chains, ${rt.index.lineVerts.length / 2} line vertices in ${Date.now() - t0} ms`);
     rt.water = await buildWater(def.id, def.origin, rt.index.bbox);
     rt.live = new LiveCity(rt.index);
+    for (const feed of def.feeds) rt.fallbacks.push(new FeedFallback(rt.index, feed, () => health.get(feed.id)));
     for (const feed of def.feeds) {
-      if (!feed.vehicles) continue;
+      if (!feed.vehicles || FORCED.has(feed.id)) continue; // forced to the timetable: don't poll live
       const a = gtfsRtAdapter();
       a.start({
         cityId: def.id, feed,
@@ -113,7 +122,13 @@ app.get<{ Params: { id: string; file: string } }>('/api/city/:id/:file', async (
   return reply.send(Buffer.from(v.buffer, v.byteOffset, v.byteLength));
 });
 
-app.get('/api/health', async () => ({ now: Date.now() / 1000, feeds: [...health.values()] }));
+app.get('/api/health', async () => ({
+  now: Date.now() / 1000,
+  feeds: [...health.values()].map((h) => {
+    const fb = cities.get(h.city)?.fallbacks.find((f) => f.feedId === h.feed);
+    return { ...h, mode: fb?.mode ?? 'live', scheduled: fb?.shown.size ?? 0 };
+  }),
+}));
 
 app.register(async (scope) => {
   scope.get('/ws', { websocket: true }, (socket) => {
@@ -125,7 +140,8 @@ app.register(async (scope) => {
         const rt = await cityOr404(m.city);
         if (!rt || subs.has(rt)) return;
         subs.add(rt); rt.subscribers.add(socket);
-        socket.send(JSON.stringify({ type: 'snap', city: rt.def.id, now: Date.now() / 1000, v: [...rt.live!.vehicles.values()].map(toWire) }));
+        const all = [...rt.live!.vehicles.values(), ...rt.fallbacks.flatMap((f) => [...f.shown.values()])];
+        socket.send(JSON.stringify({ type: 'snap', city: rt.def.id, now: Date.now() / 1000, v: all.map(toWire) }));
       } else if (m.type === 'unsub' && m.city) {
         const rt = cities.get(m.city);
         if (rt) { subs.delete(rt); rt.subscribers.delete(socket); }
@@ -136,6 +152,15 @@ app.register(async (scope) => {
     socket.on('close', () => { for (const rt of subs) rt.subscribers.delete(socket); });
   });
 });
+
+// Timetable fallback: re-evaluated every 10 s per feed.
+setInterval(() => {
+  for (const rt of cities.values()) for (const fb of rt.fallbacks) {
+    const { changed, gone } = fb.tick();
+    broadcast(rt, changed);
+    sendGone(rt, gone);
+  }
+}, 10_000);
 
 // Worldwide counter, pushed to everyone every few seconds.
 setInterval(() => {

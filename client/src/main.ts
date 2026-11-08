@@ -42,6 +42,7 @@ async function main() {
   let worldTotal = 0;
   const live = new LiveClient({
     vehicles: (id, v) => { if (id === city.id) vehicles.update(v, live.now(), live.toLocal); },
+    gone: (id, keys) => { if (id === city.id) vehicles.end(keys, live.now()); },
     stats: (total) => { worldTotal = total; },
   });
   live.subscribe(city.id);
@@ -55,7 +56,7 @@ async function main() {
     for (const [r, n] of act.perRoute) routes.active[r] = n;
     routes.update(hud.modes);
     photons.rebuild(act.perShape, engine.tier.photonBudget);
-    hud.setCounts(act.total, Math.max(worldTotal, act.total));
+    hud.setCounts(act.total, Math.max(worldTotal, act.total), act.scheduled);
   };
   setInterval(refreshActivity, 3000);
   setTimeout(refreshActivity, 1500);

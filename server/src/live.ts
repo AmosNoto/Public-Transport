@@ -14,6 +14,8 @@ const FORGET_S = 300;
 
 export const FLAG_STOPPED = 1;
 export const FLAG_SNAPPED = 2;
+/** Placed from the timetable, not a live position. */
+export const FLAG_SCHEDULED = 4;
 
 export interface VehicleState {
   key: string;

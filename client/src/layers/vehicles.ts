@@ -20,6 +20,8 @@ const JUMP = 600;
 export const FADE_START = 120, FADE_END = 180;
 
 const FLAG_STOPPED = 1;
+/** Placed from the timetable rather than a live position. */
+const FLAG_SCHEDULED = 4;
 
 /** Wire form from the server: [key, route, shape, d, v, ts, rx, ry, flags]. */
 export type WireVehicle = [string, number, number, number, number, number, number, number, number];
@@ -33,6 +35,7 @@ interface Slot {
   err: number; tC: number; hold: number; born: number;
   rx: number; ry: number;
   stopped: boolean;
+  scheduled: boolean;
 }
 
 const smooth = (a: number, b: number, x: number) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
@@ -70,7 +73,7 @@ export class Vehicles {
       vertexShader: COMMON + ROUTES + SHAPES + /* glsl */ `
         attribute vec4 aA; attribute vec4 aB; attribute vec4 aC;
         uniform float uSize;
-        varying vec2 vUv; varying vec3 vColor;
+        varying vec2 vUv; varying vec3 vColor; varying float vSched;
         const float HORIZON = ${HORIZON.toFixed(1)}, EASE = ${EASE.toFixed(1)}, HOLD_MAX = ${HOLD_MAX.toFixed(1)};
         void main() {
           vec4 rs = routeState(aC.z);
@@ -86,7 +89,9 @@ export class Vehicles {
           float alpha = smoothstep(aB.z, aB.z + 1.2, uTime) * (1.0 - smoothstep(${FADE_START.toFixed(1)}, ${FADE_END.toFixed(1)}, age));
           // Vehicles show even when their route is quiet; a hidden mode hides them entirely.
           float on = rs.a > 0.0 ? 1.0 : 0.0;
-          vColor = mix(rs.rgb, vec3(1.0), 0.45) * 1.25 * alpha * on;
+          // Scheduled vehicles: dimmer and closer to the route colour, drawn as hollow rings.
+          vSched = aC.w >= 4.0 ? 1.0 : 0.0;
+          vColor = (vSched > 0.5 ? rs.rgb * 0.8 : mix(rs.rgb, vec3(1.0), 0.45) * 1.25) * alpha * on;
           vec4 c = clipOf(rel);
           vec2 corner = position.xy * vec2(2.0, 1.0) - vec2(1.0, 0.0);
           vUv = corner;
@@ -94,12 +99,13 @@ export class Vehicles {
           gl_Position = (alpha * on) > 0.002 ? c : vec4(2.0, 2.0, 2.0, 1.0);
         }`,
       fragmentShader: /* glsl */ `
-        varying vec2 vUv; varying vec3 vColor;
+        varying vec2 vUv; varying vec3 vColor; varying float vSched;
         void main() {
           float r = length(vUv);
           if (r > 1.0) discard;
           // The lens photon falloff: 1 at the centre, 0.6 at a quarter, 0 at the edge.
           float a = r < 0.25 ? mix(1.0, 0.6, r / 0.25) : mix(0.6, 0.0, (r - 0.25) / 0.75);
+          if (vSched > 0.5) a = exp(-pow((r - 0.55) / 0.14, 2.0)) * 0.9; // hollow ring, dark centre
           gl_FragColor = vec4(vColor * a, 1.0);
         }`,
     });
@@ -125,7 +131,7 @@ export class Vehicles {
     const A = this.aA.array as Float32Array, B = this.aB.array as Float32Array, C = this.aC.array as Float32Array, i = s.i * 4;
     A[i] = s.shape; A[i + 1] = s.dF; A[i + 2] = s.stopped ? 0 : s.v; A[i + 3] = s.tF;
     B[i] = s.err; B[i + 1] = s.tC; B[i + 2] = s.born; B[i + 3] = s.hold;
-    C[i] = s.rx; C[i + 1] = s.ry; C[i + 2] = s.route; C[i + 3] = s.stopped ? FLAG_STOPPED : 0;
+    C[i] = s.rx; C[i + 1] = s.ry; C[i + 2] = s.route; C[i + 3] = (s.stopped ? FLAG_STOPPED : 0) + (s.scheduled ? FLAG_SCHEDULED : 0);
   }
 
   /** Apply fixes. `now` and timestamps are seconds on the client time base. */
@@ -134,27 +140,39 @@ export class Vehicles {
       const tF = toLocal(ts);
       let s = this.slots.get(key);
       const stopped = (flags & FLAG_STOPPED) !== 0;
+      const scheduled = (flags & FLAG_SCHEDULED) !== 0;
       const speed = stopped ? 0 : v;
       if (!s) {
         let i = this.free.pop();
         if (i === undefined) { if (this.count >= this.cap) this.grow(this.cap * 2); i = this.count++; }
-        s = { key, i, route, shape, dF: d, v, tF, err: 0, tC: now, hold: d, born: now, rx, ry, stopped };
+        s = { key, i, route, shape, dF: d, v, tF, err: 0, tC: now, hold: d, born: now, rx, ry, stopped, scheduled };
         this.slots.set(key, s);
       } else if (s.shape === shape && shape >= 0) {
         const len = this.city.shapes[shape].length;
         const shown = distanceAt({ ...s, v: s.stopped ? 0 : s.v }, now, len);
         const target = d + speed * Math.min(HORIZON, Math.max(0, now - tF));
         const err = shown - target;
-        Object.assign(s, { route, dF: d, v, tF, rx, ry, stopped, tC: now, hold: shown });
+        Object.assign(s, { route, dF: d, v, tF, rx, ry, stopped, scheduled, tC: now, hold: shown });
         if (Math.abs(err) > JUMP) { s.err = 0; s.born = now; } else s.err = err;
       } else {
         // New trip, or no shape: start fresh, fading in where it is.
-        Object.assign(s, { route, shape, dF: d, v, tF, rx, ry, stopped, err: 0, tC: now, hold: d, born: now });
+        Object.assign(s, { route, shape, dF: d, v, tF, rx, ry, stopped, scheduled, err: 0, tC: now, hold: d, born: now });
       }
       this.write(s);
     }
     this.aA.needsUpdate = this.aB.needsUpdate = this.aC.needsUpdate = true;
     this.geo.instanceCount = this.count;
+  }
+
+  /** Vehicles the server says have ended: start their fade-out now. */
+  end(keys: string[], now: number) {
+    for (const k of keys) {
+      const s = this.slots.get(k);
+      if (!s) continue;
+      s.tF = Math.min(s.tF, now - FADE_START);
+      this.write(s);
+    }
+    this.aA.needsUpdate = this.aB.needsUpdate = this.aC.needsUpdate = true;
   }
 
   /** Recycle slots whose dots have fully faded. */
@@ -170,16 +188,17 @@ export class Vehicles {
   }
 
   /** Live vehicles per route and per shape (for photon density and route activity). */
-  activity(now: number): { perRoute: Map<number, number>; perShape: Map<number, number>; total: number } {
+  activity(now: number): { perRoute: Map<number, number>; perShape: Map<number, number>; total: number; scheduled: number } {
     const perRoute = new Map<number, number>(), perShape = new Map<number, number>();
-    let total = 0;
+    let total = 0, scheduled = 0;
     for (const s of this.slots.values()) {
       if (now - s.tF > FADE_START) continue;
-      total++;
       perRoute.set(s.route, (perRoute.get(s.route) ?? 0) + 1);
+      if (s.scheduled) { scheduled++; continue; } // no flowing light, not counted as live
+      total++;
       if (s.shape >= 0) perShape.set(s.shape, (perShape.get(s.shape) ?? 0) + 1);
     }
-    return { perRoute, perShape, total };
+    return { perRoute, perShape, total, scheduled };
   }
 
   setSize(px: number) { (this.mesh.material as THREE.ShaderMaterial).uniforms.uSize.value = px; }

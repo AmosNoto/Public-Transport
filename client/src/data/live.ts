@@ -4,6 +4,7 @@ import type { WireVehicle } from '../layers/vehicles.ts';
 
 type Handlers = {
   vehicles(city: string, v: WireVehicle[], snapshot: boolean): void;
+  gone(city: string, keys: string[]): void;
   stats(total: number, perCity: Record<string, number>): void;
 };
 
@@ -43,6 +44,7 @@ export class LiveClient {
       const m = JSON.parse(ev.data);
       if (typeof m.now === 'number') this.sync(m.now);
       if (m.type === 'snap' || m.type === 'veh') this.h.vehicles(m.city, m.v, m.type === 'snap');
+      else if (m.type === 'gone') this.h.gone(m.city, m.keys);
       else if (m.type === 'stats') this.h.stats(m.total, m.cities);
     };
     ws.onclose = () => {

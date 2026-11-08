@@ -62,8 +62,11 @@ export class Hud {
     this.tick();
   }
 
-  setCounts(city: number, world: number) {
+  setCounts(city: number, world: number, scheduled = 0) {
     this.el('count-city').textContent = city.toLocaleString('en-US');
+    const sch = this.el('count-sched');
+    sch.hidden = scheduled === 0;
+    sch.textContent = `+ ${scheduled.toLocaleString('en-US')} scheduled`;
     this.el('count-world').textContent = world.toLocaleString('en-US');
   }
 
