@@ -455,12 +455,20 @@ export async function prepareCity(city: CityDef): Promise<CitySummary> {
   let bytes = 0;
   for (const feed of city.feeds) {
     const file = staticZipPath(city.id, feed.id);
+    // Apply the timetable's API key, if it needs one; never let the key reach a log or error.
+    let url = feed.static;
+    const headers = { ...feed.staticHeaders };
+    const key = feed.staticKey ? config.key(feed.staticKey.env) : undefined;
+    if (feed.staticKey && !key) throw new Error(`timetable needs ${feed.staticKey.env} (see KEYS.md)`);
+    if (key && feed.staticKey?.param) { const u = new URL(url); u.searchParams.set(feed.staticKey.param, key); url = u.toString(); }
+    if (key && feed.staticKey?.header) headers[feed.staticKey.header] = key;
+    const redact = (e: unknown) => { if (key && e instanceof Error) e.message = e.message.split(key).join('***'); return e; };
     let buf: Buffer;
     try {
-      buf = await fetchCached(feed.static, file, 24 * 3600, feed.staticHeaders, feed.maxBytes);
+      buf = await fetchCached(url, file, 24 * 3600, headers, feed.maxBytes);
     } catch (e) {
-      if (!feed.staticAlt || e instanceof TooLargeError) throw e;
-      buf = await fetchCached(feed.staticAlt, file, 24 * 3600, feed.staticHeaders, feed.maxBytes);
+      if (!feed.staticAlt || e instanceof TooLargeError) throw redact(e);
+      buf = await fetchCached(feed.staticAlt, file, 24 * 3600, feed.staticHeaders, feed.maxBytes).catch((e2) => { throw redact(e2); });
     }
     bytes += buf.byteLength;
     zips.push(new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength));

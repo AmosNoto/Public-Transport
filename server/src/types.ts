@@ -31,6 +31,8 @@ export interface FeedDef {
   /** GTFS static zip. */
   static: string;
   staticHeaders?: Record<string, string>;
+  /** An API key the timetable download needs (same shape as a realtime source's key). */
+  staticKey?: { env: string; param?: string; header?: string };
   /** Tried when `static` fails (e.g. the catalog's mirror is missing a file: use the publisher's URL). */
   staticAlt?: string;
   /** Live positions; empty or absent means the feed is shown from its timetable. */
@@ -44,6 +46,8 @@ export interface FeedDef {
   attribution: string;
   /** Wording the publisher requires to be displayed with the data. */
   legend?: string;
+  /** Link the publisher requires with the legend. */
+  legendUrl?: string;
   /** Why there's no realtime, shown in diagnostics (e.g. "needs ONEBUSAWAY_KEY"). */
   note?: string;
 }
@@ -61,6 +65,8 @@ export interface CityDef {
   origin: { lon: number; lat: number };
   /** Discovered places work out origin and time zone from their own timetable. */
   auto?: boolean;
+  /** Environment variables (API keys) this city needs; without them it's left out entirely. */
+  requires?: string[];
   source: 'curated' | 'catalog';
   feeds: FeedDef[];
 }

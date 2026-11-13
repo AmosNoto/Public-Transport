@@ -3,11 +3,18 @@
 // Mobility Database catalog (catalog/mobilitydb.ts); the `mdb` ids here tell discovery which
 // catalog entries these already cover.
 
+import { config } from '../config.ts';
 import type { CityDef } from '../types.ts';
 
 const ENTUR_HEADERS = { 'ET-Client-Name': 'afterglow-transit-map' };
 
+/** Curated cities whose required API keys are set. */
 export function cityDefs(): CityDef[] {
+  return allCityDefs().filter((c) => (c.requires ?? []).every((env) => config.key(env)));
+}
+
+/** Every curated city, including those whose keys aren't set (for KEYS.md). */
+export function allCityDefs(): CityDef[] {
   return [
     {
       source: 'curated',
@@ -124,6 +131,33 @@ export function cityDefs(): CityDef[] {
         note: 'Ruter publishes no open vehicle positions (checked Entur GTFS-RT, SIRI-VM and the vehicles API); shown from the timetable.',
         license: { name: 'NLOD', url: 'https://data.norge.no/nlod/en/' },
         attribution: 'Ruter via Entur',
+      }],
+    },
+    {
+      // The whole Bay Area from 511 SF Bay's regional feeds: one timetable and one realtime feed
+      // covering ~38 agencies (Muni, BART, AC Transit, VTA, Caltrain, SamTrans, ferries…), with
+      // operator-prefixed ids. Needs a free 511 key, whose default limit is 60 requests an hour,
+      // so positions are polled every 75 s (48/hour) and the timetable once a day.
+      source: 'curated',
+      id: 'bayarea', name: 'San Francisco Bay Area', country: 'United States', tz: 'America/Los_Angeles',
+      origin: { lon: -122.2711, lat: 37.6879 },
+      requires: ['KEY_API_511_ORG'],
+      feeds: [{
+        id: '511-rg', agency: '511 SF Bay (regional)',
+        // Catalog entries this supersedes: 511's per-agency feeds and the Bay Area agencies the
+        // regional feed includes (Muni, Caltrain, Tri Delta, SMART, VINE, VTA, Emery Go-Round,
+        // SF Bay Ferry, Marin Transit, Mountain View shuttle, AC Transit).
+        mdb: ['2886', '1843', '54', '3053', '1974', '1976', '3222', '3224', '1288', '57', '2224', '3143', '2937', '2880', '2455'],
+        static: 'https://api.511.org/transit/datafeeds?operator_id=RG',
+        staticKey: { env: 'KEY_API_511_ORG', param: 'api_key' },
+        realtime: [{
+          id: '511-rg', kind: 'gtfs-rt', url: 'https://api.511.org/transit/vehiclepositions?agency=RG', minIntervalS: 75,
+          key: { env: 'KEY_API_511_ORG', param: 'api_key', info: 'https://511.org/open-data/token' },
+        }],
+        license: { name: '511 Data Disseminator Agreement', url: 'https://511.org/sites/default/files/pdfs/511_Data_Agreement_Final.pdf' },
+        attribution: 'Metropolitan Transportation Commission, 511 SF Bay',
+        legend: 'Data provided by 511.org',
+        legendUrl: 'https://511.org',
       }],
     },
   ];

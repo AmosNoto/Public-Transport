@@ -143,3 +143,5 @@ body.diag-open .hud { opacity: 0; pointer-events: none; }
 .st-no-key, .st-skipped { color: var(--faint); }
 .st-http-error, .st-network-error, .st-decode-error, #diag .bad { color: #e08a7c; }
 #diag .warn { color: #c9b26b; }
+.legend a { color: inherit; text-decoration: underline; text-decoration-color: rgba(141, 156, 173, 0.4); text-underline-offset: 2px; }
+body.idle .br .legend { pointer-events: auto; }

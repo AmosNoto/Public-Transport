@@ -12,6 +12,15 @@ const LABELS: Record<Mode, string> = { subway: 'Subway / metro', rail: 'Trains /
 
 const fmt = (n: number) => n.toLocaleString('en-US');
 
+/** A publisher's required legend, linked when they require a link (e.g. "Data provided by 511.org"). */
+function legendNode(c: Credit): Node {
+  if (!c.legendUrl) return document.createTextNode(c.legend ?? '');
+  const a = document.createElement('a');
+  a.href = c.legendUrl; a.target = '_blank'; a.rel = 'noopener';
+  a.textContent = c.legend ?? '';
+  return a;
+}
+
 export class Hud {
   readonly modes: Record<Mode, boolean> = { subway: true, rail: true, bus: true, tram: true };
   private el = (id: string) => document.getElementById(id)!;
@@ -151,14 +160,14 @@ export class Hud {
       link.textContent = a.license;
       if (a.url && link instanceof HTMLAnchorElement) { link.href = a.url; link.target = '_blank'; link.rel = 'noopener'; }
       li.appendChild(link);
-      if (a.legend) { const p = document.createElement('div'); p.className = 'legend-text'; p.textContent = a.legend; li.appendChild(p); }
+      if (a.legend) { const p = document.createElement('div'); p.className = 'legend-text'; p.append(legendNode(a)); li.appendChild(p); }
       list.appendChild(li);
     }
     // Publishers that require their legend to be displayed: shown whenever their city is in view.
-    const legend = focused?.attribution.find((a) => a.legend)?.legend ?? '';
+    const credit = focused?.attribution.find((a) => a.legend);
     const lg = this.el('legend');
-    lg.textContent = legend;
-    lg.hidden = !legend;
+    lg.replaceChildren(...(credit ? [legendNode(credit)] : []));
+    lg.hidden = !credit;
   }
 
   /** A line under the clock: what's happening with the place in view (or nothing). */

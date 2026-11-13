@@ -12,7 +12,7 @@ export interface RouteInfo {
 }
 export interface ShapeInfo { id: string; route: number; start: number; count: number; length: number }
 
-export interface Credit { name: string; license: string; url?: string; legend?: string }
+export interface Credit { name: string; license: string; url?: string; legend?: string; legendUrl?: string }
 
 /** A place as listed by /api/cities (available before its geometry is loaded). */
 export interface CityInfo {

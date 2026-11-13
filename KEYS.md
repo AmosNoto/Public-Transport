@@ -6,10 +6,25 @@ positions. Without a key, a keyed place still appears, drawn from its timetable 
 Keys go in `.env` (copy `.env.example`), never in client code or git. Restart the server after adding one.
 Its feeds start polling right away, and the diagnostics view (`#diagnostics`) shows whether each one works.
 
-## What the catalog lists (generated 2026-11-08)
+## Curated cities that need a key
 
-From the [Mobility Database](https://mobilitydatabase.org) catalog: 298 places with vehicle positions beyond the curated cities,
-188 of them keyless. 129 more feeds need one of the 21 keys below. One key usually covers every feed on its host.
+Checked by hand: each key below was tested live, and its licence read.
+
+### San Francisco Bay Area: `KEY_API_511_ORG`
+
+- 511 SF Bay (regional). Sign up: https://511.org/open-data/token
+- Licence: [511 Data Disseminator Agreement](https://511.org/sites/default/files/pdfs/511_Data_Agreement_Final.pdf); shows “Data provided by 511.org” whenever the city is in view, as required
+
+**San Francisco Bay Area details.** One 511 key gives the regional timetable and one realtime feed for about 38 agencies
+(Muni, BART, AC Transit, VTA, Caltrain, SamTrans, Golden Gate, the ferries and more), about 2,100 vehicles when tested.
+511's default limit is 60 requests an hour per key, so Afterglow polls every 75 s (48 an hour) plus one timetable
+download a day. Run only one copy of the app per key, or ask 511 for a higher limit. With the key set, this city replaces
+the catalog's separate Bay Area entries (Muni, Caltrain, VTA, Marin Transit, SF Bay Ferry and others).
+
+## What the catalog lists (generated 2026-11-13)
+
+From the [Mobility Database](https://mobilitydatabase.org) catalog: 288 places with vehicle positions beyond the curated cities,
+187 of them keyless. 120 more feeds need one of the 19 keys below. One key usually covers every feed on its host.
 
 These come from the catalog and have **not** been tested with real keys (I have none). Treat the sign-up links
 and feed counts as the catalog's claim; the diagnostics view is the check once a key is set.
@@ -18,18 +33,16 @@ Regenerate this file from the current catalog with `npm run keys`.
 
 | Variable | Feeds | Host | Sign up |
 |---|---:|---|---|
-| `KEY_API_GOSWIFT_LY` | 56 | api.goswift.ly | [link](https://goswift.ly/realtime-api-key) |
+| `KEY_API_GOSWIFT_LY` | 52 | api.goswift.ly | [link](https://goswift.ly/realtime-api-key) |
 | `KEY_OPENDATA_SAMTRAFIKEN_SE` | 30 | opendata.samtrafiken.se | [link](https://developer.trafiklab.se/register) |
 | `KEY_EXO_CHRONO_SAEIV_COM` | 9 | exo.chrono-saeiv.com | [link](https://exo.quebec/fr/a-propos/donnees-ouvertes/FormulaireDemandeAcces) |
 | `KEY_DATA_WALTTI_FI` | 4 | data.waltti.fi | [link](https://opendata.waltti.fi/getting-started#api-tokens) |
-| `KEY_API_511_ORG` | 4 | api.511.org | [link](https://511.org/open-data/token) |
 | `KEY_API_OPENDATA_TRANSPORT_VIC_GOV_AU` | 4 | api.opendata.transport.vic.gov.au | [link](https://data-exchange.vicroads.vic.gov.au/signin) |
 | `KEY_OPENDATA_EXO_QUEBEC` | 3 | opendata.exo.quebec | [link](https://exo.quebec/fr/a-propos/donnees-ouvertes/FormulaireDemandeAcces) |
 | `KEY_API_PUGETSOUND_ONEBUSAWAY_ORG` | 3 | api.pugetsound.onebusaway.org | [link](https://www.soundtransit.org/help-contacts/business-information/open-transit-data-otd/otd-downloads) |
 | `KEY_API_TRANSPORT_NSW_GOV_AU` | 3 | api.transport.nsw.gov.au | [link](https://opendata.transport.nsw.gov.au/data/user/register) |
 | `KEY_API_WMATA_COM` | 2 | api.wmata.com | [link](https://developer.wmata.com/signup/) |
 | `KEY_API_AT_GOVT_NZ` | 1 | api.at.govt.nz | [link](https://dev-portal.at.govt.nz/) |
-| `KEY_API_ACTRANSIT_ORG` | 1 | api.actransit.org | [link](https://api.actransit.org/transit/Account/Register) |
 | `KEY_DEVELOPER_TRIMET_ORG` | 1 | developer.trimet.org | [link](https://developer.trimet.org/GTFS.shtml) |
 | `KEY_GO_BKK_HU` | 1 | go.bkk.hu | [link](https://fiok.bkk.hu/auth) |
 | `KEY_TRANSPORT_API_ACT_GOV_AU` | 1 | transport.api.act.gov.au | [link](https://www.transport.act.gov.au/__data/assets/pdf_file/0005/2865398/MyWayPlus-GTFS-developer-access-guide-v1.1.pdf) |
@@ -62,7 +75,6 @@ Regenerate this file from the current catalog with `npm run keys`.
 - Green Mountain Transit Agency (Burlington, Vermont, United States)
 - Merrimack Valley Regional Transit Authority (MVRTA) (Massachusetts, United States)
 - TheBus (Hawaii, United States)
-- VINE Transit (Napa, California, United States)
 - Qline Detroit (Detroit, Michigan, United States)
 - LA Metro (Los Angeles, California, United States)
 - Gunnison Valley Transportation Authority (RTA) (Colorado, United States)
@@ -84,7 +96,6 @@ Regenerate this file from the current catalog with `npm run keys`.
 - Avalon Transit (Long Beach, California, United States)
 - Charleston Area Regional Transportation Authority (Charleston, South Carolina, United States)
 - Miami Dade Transit (Miami, Florida, United States)
-- Santa Clara Valley Transportation Authority (VTA) (San Jose, California, United States)
 - Washington Park Shuttle (Portland, Oregon, United States)
 - Williamsburg Area Transit Authority (WATA) (Williamsburg, Virginia, United States)
 - Linn Shuttle (Sweet Home, Oregon, United States)
@@ -98,8 +109,6 @@ Regenerate this file from the current catalog with `npm run keys`.
 - Maryland Transit Administration (MTA) Commuter Bus (Maryland, United States)
 - Maryland Transit Administration (MTA) Light Rail (Maryland, United States)
 - Maryland Transit Administration (MTA) Local Bus (Maryland, United States)
-- Marin County Transit District (MCTD) (San Francisco, California, United States)
-- San Francisco Bay Ferry (San Francisco, California, United States)
 
 ### `KEY_OPENDATA_SAMTRAFIKEN_SE`
 
@@ -143,13 +152,6 @@ Regenerate this file from the current catalog with `npm run keys`.
 - Linja-Karjala Oy, Savo-Karjalan Linja Oy (Joensuu, Pohjois-Karjala, Finland)
 - Jyväskylän Liikenne Oy, Koivuranta Oy, Uuraisten Liikenne Ky, Savo-Karjalan Linja Oy, Linja-Karjala Oy, Oulun taksipalvelut Oy, Oubus Oy, Suorsan Liikenne Ky, Koskilinjat Oy, Oy Pohjolan liikenne Ab, Kuopion Liikenne Oy, Autolinjat Oy, ML-Charter Oy, Etelä-Suomen Linjaliikenne Oy, Linjaliikenne Martti Laurila Oy, Kari Väisänen Ky, Matkatoimisto Matka-Majuri Ky, Linja-autoliikenne P. Puolakka Ky, Elimäen Liikenne Oy, Anjalankosken Linja Oy, Savonlinja Oy, Liikenne M. Heikura Oy, Jääskeläisen Auto Oy, Kilpailutus käynnissä, TILAUSAJOT MENNÄÄN BUSSILLA OY, Revon Turistiliikenne Oy, Matkamestarit Oy, R-Kioski, A. Valppu Oy, Invataksi Niemi Oy, Oy Wiik & Ström Ab, Oravaisten Liikenne Oy, Vaasan Paikallisliikenne Oy, Koiviston Auto Oy, Lehtimäen Liikenne Oy, Järvisen Liikenne Oy, Niemisen Linjat Oy, Bus Travel Oy Reissu Ruoti, Taksi- ja linja-autoliikenne Timo Lahtinen, SL-Autoyhtymä Oy, Linja-autoliike E Ahonen Ky, Lehdon Liikenne Oy, HämeBus Oy, Tuuri Jaakko Juhani, Pekolan Liikenne Oy, Mikkolan Liikenne Oy, Vekka Liikenne Oy, Inter Kuljetus Oy, Valkeakosken Liikenne Oy, Matkahuolto Oy, ELY, Ventoniemi Oy, Yhdysliikenne Oy, MIKA K. NISKANEN OY, Kantamatkat, LINJA-AUTOLIIKE YRJÖ MAKKONEN & KUMPP, SOISALON LIIKENNE OY, Pohjolan Matka, HENKILÖKULJETUS RISSANEN OY, V.Alamäki Oy, Kai Heikkinen Oy, Savo Kainuun Tilausmatkat Ky, Kajaanin Tila-autot Oy, A Kyllönen Oy, Puolangan Bussipalvelu Ky, Kainuun Tilausliikenne P. Jääskeläinen Ky, Matka-Kyllönen Oy, Jyrkilä Oy, Liikenne Vuorela Oy, Pyhtään Kuljetuspalvelut Oy, Erkki Itkonen Oy, Ihastjärven Linja Oy, Tilausliikenne Himanen, Mikkelin Palvelutaksit Oy, Tuplataxi, Matka Mäkelä Oy, Tilausliikenne Hokkinen Ky, S. J. TOIVONEN OY, E. RANTANEN OY, Kuljetus Mikkonen KY, Linja-autoliike Veljekset Laitinen Oy, TILAUSLIIKENNE HÄNNINEN OY, JOUTSENON AUTO- JA KULJETUSPALVELU OY, TOIMI VENTO KY, NINA´S ERIKOISTAKSIPALVELUT OY, Tarkiainen Matti Olavi, Anssin Tilausliikenne Oy, Rautalammin Auto Oy, Oy Rytkönen & Co, SAIMAAN TURISTILIIKENNE OY, Studio Ticket Pusatec-DO-NOT-USE, Studio Ti (Jyväskylä, Keski-Suomi, Finland)
 
-### `KEY_API_511_ORG`
-
-- San Francisco Municipal Transportation Agency (SFMTA - Muni) (San Francisco, United States)
-- Tri Delta Transit (Concord, California, United States)
-- Caltrain (San Francisco, California, United States)
-- Sonoma-Marin Area Rail Transit (SMART) (Santa Rosa, California, United States)
-
 ### `KEY_API_OPENDATA_TRANSPORT_VIC_GOV_AU`
 
 - Public Transport Victoria (PTV) Metro Train (Melbourne, Victoria, Australia)
@@ -182,10 +184,6 @@ Regenerate this file from the current catalog with `npm run keys`.
 ### `KEY_API_AT_GOVT_NZ`
 
 - SeaLink Pine Harbour, Waikato Regional Council, Pavlovich Transport Solutions, AT Metro (New Zealand)
-
-### `KEY_API_ACTRANSIT_ORG`
-
-- Alameda-Contra Costa Transit District (AC Transit) (Oakland, California, United States)
 
 ### `KEY_DEVELOPER_TRIMET_ORG`
 

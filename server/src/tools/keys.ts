@@ -4,10 +4,11 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { config } from '../config.ts';
-import { cityDefs } from '../cities/index.ts';
+import { allCityDefs } from '../cities/index.ts';
 import { discover } from '../catalog/mobilitydb.ts';
 
-const covered = new Set(cityDefs().flatMap((c) => c.feeds.flatMap((f) => f.mdb ?? [])));
+const curatedKeyed = allCityDefs().filter((c) => c.requires?.length);
+const covered = new Set(allCityDefs().flatMap((c) => c.feeds.flatMap((f) => f.mdb ?? [])));
 const d = await discover(covered, config.maxStaticBytes);
 const date = new Date().toISOString().slice(0, 10);
 const keyless = d.cities.filter((c) => c.feeds.some((f) => f.realtime?.some((r) => !r.key))).length;
@@ -21,6 +22,25 @@ const lines = [
   '',
   'Keys go in `.env` (copy `.env.example`), never in client code or git. Restart the server after adding one.',
   'Its feeds start polling right away, and the diagnostics view (`#diagnostics`) shows whether each one works.',
+  '',
+  '## Curated cities that need a key',
+  '',
+  'Checked by hand: each key below was tested live, and its licence read.',
+  '',
+  ...curatedKeyed.flatMap((c) => [
+    `### ${c.name}: \`${c.requires!.join('`, `')}\``,
+    '',
+    ...c.feeds.flatMap((f) => [
+      `- ${f.agency}. Sign up: ${f.realtime?.find((r) => r.key?.info)?.key?.info ?? '–'}`,
+      `- Licence: [${f.license.name}](${f.license.url})${f.legend ? `; shows “${f.legend}” whenever the city is in view, as required` : ''}`,
+    ]),
+    '',
+  ]),
+  '**San Francisco Bay Area details.** One 511 key gives the regional timetable and one realtime feed for about 38 agencies',
+  '(Muni, BART, AC Transit, VTA, Caltrain, SamTrans, Golden Gate, the ferries and more), about 2,100 vehicles when tested.',
+  "511's default limit is 60 requests an hour per key, so Afterglow polls every 75 s (48 an hour) plus one timetable",
+  'download a day. Run only one copy of the app per key, or ask 511 for a higher limit. With the key set, this city replaces',
+  "the catalog's separate Bay Area entries (Muni, Caltrain, VTA, Marin Transit, SF Bay Ferry and others).",
   '',
   `## What the catalog lists (generated ${date})`,
   '',

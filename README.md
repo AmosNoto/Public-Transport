@@ -9,7 +9,7 @@ A live, glowing map of public transit. Every real vehicle is a glowing dot; rout
 Two sources:
 
 - **Discovered.** At startup the server reads the [Mobility Database](https://mobilitydatabase.org) catalog and turns every active vehicle-positions feed linked to a timetable into a place: about 300 of them; in testing, 275 built across 21 countries, 188 with keyless live data. New catalog entries are picked up daily. See *Discovery* below.
-- **Curated.** Seven cities checked by hand (licence wording, the right timetable for the realtime feed, filters for national feeds, a non-GTFS-RT source). They take priority over the catalog's entries for the same feeds:
+- **Curated.** Eight cities checked by hand (licence wording, the right timetable for the realtime feed, filters for national feeds, a non-GTFS-RT source). They take priority over the catalog's entries for the same feeds:
 
 | City | Feeds | Live positions |
 |---|---|---|
@@ -20,8 +20,9 @@ Two sources:
 | Helsinki | HSL | live, ~1 update per vehicle per second (MQTT high-frequency positioning) |
 | Amsterdam | OVapi national feed, every route through the Amsterdam area | live |
 | Oslo | Ruter (via Entur) | from the timetable (Ruter publishes no open vehicle positions) |
+| San Francisco Bay Area | 511 SF Bay regional feed: ~38 agencies (Muni, BART, AC Transit, VTA, Caltrain, SamTrans, ferries…) | live, **needs a free 511 key** (`KEY_API_511_ORG`); left out without one |
 
-No API keys are needed. Keys add live positions for about 130 more feeds; see `KEYS.md` (generated from the catalog: `npm run keys`).
+No API keys are needed for the first seven. Keys add the Bay Area and live positions for about 120 more feeds; see `KEYS.md` (generated from the catalog: `npm run keys`).
 
 **Live or scheduled.** Each feed shows live positions while it has them. If a feed's live data stops, goes stale or is empty for two minutes (or the agency publishes no live feed at all), its vehicles are placed from the GTFS timetable instead: they move along their real route shapes at timetabled pace, drawn as dimmer hollow rings with no flowing light, and counted separately ("+ N scheduled").
 
@@ -106,6 +107,7 @@ Credits for the city in view are in the (i) panel; publishers who require a disp
 - Helsinki: Helsinki Region Transport, HSL (CC BY 4.0)
 - Amsterdam: OVapi / NDOV Loket (CC0 1.0; shapes ODbL, © OpenStreetMap contributors)
 - Oslo: Ruter via Entur (NLOD)
+- San Francisco Bay Area: Metropolitan Transportation Commission, 511 SF Bay (511 Data Disseminator Agreement; "Data provided by 511.org", linked, shown whenever the Bay Area is in view)
 - Discovered places: each operator, with the licence link from the catalog (in the (i) panel and diagnostics)
 - Feed catalog: Mobility Database by MobilityData
 - Basemap: OpenFreeMap © OpenMapTiles, data © OpenStreetMap contributors (ODbL)

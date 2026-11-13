@@ -60,7 +60,7 @@ const counts = (p: Place, now = Date.now() / 1000) => ({ live: p.liveCount(now),
 
 function attribution(p: Place) {
   return [
-    ...p.def.feeds.map((f) => ({ name: f.attribution, license: f.license.name, url: f.license.url, legend: f.legend })),
+    ...p.def.feeds.map((f) => ({ name: f.attribution, license: f.license.name, url: f.license.url, legend: f.legend, legendUrl: f.legendUrl })),
     ...(p.def.source === 'catalog' ? [CATALOG_ATTRIBUTION] : []),
     { name: BASEMAP_ATTRIBUTION, license: 'ODbL', url: 'https://www.openstreetmap.org/copyright' },
   ];

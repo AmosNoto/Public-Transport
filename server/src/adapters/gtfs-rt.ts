@@ -102,7 +102,9 @@ export function gtfsRtAdapter(): SourceAdapter {
     stop() { stopped = true; if (timer) clearTimeout(timer); },
     poke() {
       // Poll now unless we just did (never faster than the normal interval).
-      if (!ctxRef || stopped || inFlight || Date.now() - lastPoll < config.pollIntervalS * 1000) return;
+      // Never faster than the normal interval or the feed's own minimum (e.g. a key's rate limit).
+      const minS = Math.max(config.pollIntervalS, ctxRef?.source.minIntervalS ?? 0);
+      if (!ctxRef || stopped || inFlight || Date.now() - lastPoll < minS * 1000) return;
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => poll(ctxRef!), 0);
     },
