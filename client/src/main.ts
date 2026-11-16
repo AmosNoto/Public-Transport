@@ -20,10 +20,15 @@ import { TimeLapse } from './ui/timelapse.ts';
  */
 function initialView() {
   const lon = Math.max(-170, Math.min(170, -new Date().getTimezoneOffset() / 4));
+  return earthView(lon, 28);
+}
+
+/** The whole Earth in view, centred on a point. */
+function earthView(lon: number, lat: number) {
   const R = 6371008.8, aspect = innerWidth / Math.max(1, innerHeight);
   const t = Math.tan((35 / 2) * Math.PI / 180) * Math.min(1, aspect);
   const alt = Math.max(21_000_000, (R * 1.12) / t - R);
-  return { lon, lat: 28, alt, bearing: 0, pitch: 0 };
+  return { lon, lat: Math.max(-50, Math.min(55, lat)), alt, bearing: 0, pitch: 0 };
 }
 
 async function main() {
@@ -99,7 +104,12 @@ async function main() {
   inspectBtn.onclick = () => inspector.toggle();
 
   // Auto-tour: button, or ?tour in the URL (for a screen left running).
-  const tour = new Tour(cam, cities);
+  const tour = new Tour(cam, cities, earthView);
+
+  // Back to the whole Earth (button by the place name, or the Home key).
+  const home = () => { tour.stop(); timelapse.stop(); cam.flyTo(earthView(cam.view.lon, Math.max(-20, Math.min(35, cam.view.lat)))); };
+  document.getElementById('home-btn')!.onclick = home;
+  addEventListener('keydown', (e) => { if (e.key === 'Home' && !(e.target as HTMLElement)?.closest?.('input, textarea, select')) home(); });
   const tourBtn = document.getElementById('tour-btn')!;
   tour.onChange = (on) => { tourBtn.classList.toggle('on', on); tourBtn.setAttribute('aria-pressed', String(on)); };
   tourBtn.onclick = () => tour.toggle();
@@ -154,6 +164,7 @@ async function main() {
       hud.setStatus(
         performance.now() < hintUntil ? hint
         : timelapse.active ? `replay ×${timelapse.speed}${timelapse.playing ? '' : ' · paused'}`
+        : tour.active ? tour.label
         : pend ? (pend.info.state === 'error' ? 'timetable unavailable right now' : 'preparing timetable…')
         : f?.info.timetableOnly ? 'from the timetable · no live feed'
         : !f && worldFeeds ? `${worldFeeds} live feeds` : '',

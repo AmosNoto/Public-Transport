@@ -59,9 +59,9 @@ export const PALETTE: Record<'dark' | 'light', Palette> = {
   // Paper: land a warm off-white, water a cool grey-blue a step darker, space a pale cool grey.
   // The night side is the same paper in shadow, so the terminator still reads.
   light: {
-    space: new THREE.Color('#e4e8ec'),
-    landDay: new THREE.Color('#f5f3ee'), landNight: new THREE.Color('#dedcd6'),
-    waterDay: new THREE.Color('#dbe2e8'), waterNight: new THREE.Color('#c6ced6'),
+    space: new THREE.Color('#dde1e4'),
+    landDay: new THREE.Color('#ece8df'), landNight: new THREE.Color('#d6d2c9'),
+    waterDay: new THREE.Color('#d3dae0'), waterNight: new THREE.Color('#bfc7cf'),
   },
 };
 
@@ -179,11 +179,12 @@ export class Engine {
           float m = max(c.r, max(c.g, c.b));
           // Hue of the light at full strength, then a deep ink of it (lightness lowered, chroma kept).
           vec3 hue = c / max(m, 1e-4);
-          vec3 ink = pow(hue, vec3(3.0)) * 0.5;
-          // Faint light (the outer bloom) barely marks the paper; lines and dots print solidly.
-          float k = smoothstep(0.02, 0.35, m) * 2.6;
-          vec3 absorb = (1.0 - ink) * m * k;
-          gl_FragColor = vec4(mix(vec3(1.0), exp(-absorb), uInk), 1.0);
+          // Watercolour, not marker: a mid-depth ink of the hue that never reaches black.
+          vec3 ink = pow(hue, vec3(2.2)) * 0.55 + 0.05;
+          // How much of the paper it covers: faint light (the outer bloom) barely marks it, a
+          // line or dot prints clearly, and overlaps deepen a little but stop at 70% coverage.
+          float depth = 0.7 * (1.0 - exp(-1.7 * m)) * smoothstep(0.02, 0.25, m);
+          gl_FragColor = vec4(mix(vec3(1.0), mix(vec3(1.0), ink, depth), uInk), 1.0);
         }`,
     }));
     this.inkPass.frustumCulled = false;

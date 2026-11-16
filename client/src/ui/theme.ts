@@ -56,7 +56,7 @@ export class Theme {
     if (look !== this.applied) {
       this.applied = look;
       document.body.dataset.theme = look;
-      document.querySelector('meta[name="theme-color"]')?.setAttribute('content', look === 'light' ? '#e4e8ec' : '#090d12');
+      document.querySelector('meta[name="theme-color"]')?.setAttribute('content', look === 'light' ? '#dde1e4' : '#090d12');
       this.onChange(this.mode, look);
     }
   }
