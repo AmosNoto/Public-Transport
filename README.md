@@ -2,7 +2,7 @@
 
 A live, glowing map of public transit. Every real vehicle is a glowing dot; routes are thin lines of coloured light. It opens on a dark 3D globe where each city is a glowing cluster; zooming in (or clicking a city) flies down and the globe unrolls into a flat map, in one continuous camera.
 
-**Status: milestone 3 of 4** (global feed catalog). See `PLAN.md` for the plan and milestones.
+**Status: all four milestones built** (one city → globe → global catalog → extras). See `PLAN.md` for the plan and milestones.
 
 ## Places
 
@@ -50,6 +50,22 @@ Optional configuration goes in `.env` (copy `.env.example`).
 - Right-drag (or ctrl/shift-drag, or two fingers) to rotate and tilt. Tilt unlocks once the globe has unrolled into the map.
 - Click a city's glow on the globe, or pick it in the switcher (top left; search by city, operator, region or country), to fly there.
 - Arrow keys pan, `+` / `-` zoom.
+
+### The buttons (bottom right)
+
+The UI fades after a few idle seconds; move the pointer to bring it back.
+
+- **Modes:** subway/metro, rail, bus, tram/ferry/cable car. Each one toggles that kind of line and its vehicles.
+- **Interactive** (arrow, off by default): point at a vehicle or a line to see what it is. The route lights up and the rest of the network recedes. The card shows the line, mode and operator, and for a vehicle whether it's live or from the timetable, how old its position is, its speed and its fleet number. On touch, tap to inspect and tap empty map to dismiss.
+- **Time-lapse** (rewind clock): replay the last hour of the city you're in, at ×30 to ×240. Scrub anywhere in the hour; **Live** (or reaching the end) returns to the live stream. The server records every place's live positions whether or not anyone is watching, so any city has its last hour ready (`HISTORY_MINUTES`, default 60). Only live vehicles are replayed, not timetabled ones.
+- **Auto-tour** (play): drifts between busy places, weighted by how much is running, circling slowly at each. Any touch, scroll or key hands control back. Add `?tour` to the URL to start it on load (for a screen left running).
+- **Theme** (half-circle / moon / sun):
+  - **Dark:** light on a dark map.
+  - **Light:** ink on paper. The same light becomes deep ink of the same hue soaking into the paper, so busy corridors deepen instead of whitening.
+  - **Auto** (the default) follows the sun where you're looking: daytime places are drawn as ink on paper, night-time places as light on dark, and flying across the terminator crossfades between them.
+- **(i):** data sources and licences for what's in view.
+
+With *reduce motion* set in your system, flights become cuts, the tour holds still at each place, and themes switch without fading.
 
 ### Diagnostics
 

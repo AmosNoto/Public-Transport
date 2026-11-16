@@ -27,6 +27,8 @@ export interface SharedUniforms {
   uDpr: { value: number };
   uSun: { value: THREE.Vector2 };
   uDayNight: { value: number };
+  /** 0 = light on a dark map (Dark), 1 = ink on paper (Light); in between while Auto crossfades. */
+  uInk: { value: number };
 }
 
 /** Per-layer placement relative to the focus (see layerOffsets in geo.ts). */
@@ -46,11 +48,20 @@ export function layerUniforms(): LayerUniforms {
   return { uDLon: { value: 0 }, uM0: { value: 0 }, uOff: { value: new THREE.Vector2() } };
 }
 
-export const PALETTE = {
+export interface Palette { space: THREE.Color; landDay: THREE.Color; landNight: THREE.Color; waterDay: THREE.Color; waterNight: THREE.Color }
+
+export const PALETTE: Record<'dark' | 'light', Palette> = {
   dark: {
     space: new THREE.Color('#090d12'),
     landDay: new THREE.Color('#0e151d'), landNight: new THREE.Color('#080b10'),
     waterDay: new THREE.Color('#070a0f'), waterNight: new THREE.Color('#030407'),
+  },
+  // Paper: land a warm off-white, water a cool grey-blue a step darker, space a pale cool grey.
+  // The night side is the same paper in shadow, so the terminator still reads.
+  light: {
+    space: new THREE.Color('#e4e8ec'),
+    landDay: new THREE.Color('#f5f3ee'), landNight: new THREE.Color('#dedcd6'),
+    waterDay: new THREE.Color('#dbe2e8'), waterNight: new THREE.Color('#c6ced6'),
   },
 };
 
@@ -60,6 +71,11 @@ export class Engine {
   readonly base = new THREE.Scene();
   readonly light = new THREE.Scene();
   readonly uniforms: SharedUniforms;
+  /** The live palette (shared Color objects every base layer reads), mixed by setInk. */
+  readonly palette: Palette = {
+    space: PALETTE.dark.space.clone(), landDay: PALETTE.dark.landDay.clone(), landNight: PALETTE.dark.landNight.clone(),
+    waterDay: PALETTE.dark.waterDay.clone(), waterNight: PALETTE.dark.waterNight.clone(),
+  };
   readonly device: DeviceInfo;
   tier: Tier;
   private lightRT!: THREE.WebGLRenderTarget;
@@ -69,6 +85,8 @@ export class Engine {
   private resolveScene = new THREE.Scene();
   private composite: THREE.Mesh<THREE.PlaneGeometry, THREE.ShaderMaterial>;
   private compositeScene = new THREE.Scene();
+  private inkPass: THREE.Mesh<THREE.PlaneGeometry, THREE.ShaderMaterial>;
+  private inkScene = new THREE.Scene();
   private orthoCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
   private governor: FrameGovernor;
   private lastFrame = 0;
@@ -111,8 +129,9 @@ export class Engine {
       uDpr: { value: 1 },
       uSun: { value: new THREE.Vector2() },
       uDayNight: { value: 1 },
+      uInk: { value: 0 },
     };
-    this.base.background = PALETTE.dark.space;
+    this.base.background = this.palette.space;
 
     // Resolve: light accumulates in HDR (so overlaps never clip early), then is compressed to
     // the 0–1 range the lens's 8-bit bloom buffer had. Overflow spills into all channels, so
@@ -133,17 +152,42 @@ export class Engine {
     }));
     this.resolve.frustumCulled = false;
     this.resolveScene.add(this.resolve);
-    // Composite: resolved light plus its bloom, added over the base.
+    // Composite, Dark: resolved light plus its bloom, added over the base (scaled by 1 - ink).
     this.composite = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.ShaderMaterial({
-      uniforms: { tLight: { value: null } },
+      uniforms: { tLight: { value: null }, uInk: this.uniforms.uInk },
       depthTest: false, depthWrite: false, transparent: true, blending: THREE.AdditiveBlending,
       vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
       fragmentShader: /* glsl */ `
-        uniform sampler2D tLight; varying vec2 vUv;
-        void main() { gl_FragColor = vec4(min(texture2D(tLight, vUv).rgb, 1.0), 1.0); }`,
+        uniform sampler2D tLight; uniform float uInk; varying vec2 vUv;
+        void main() { gl_FragColor = vec4(min(texture2D(tLight, vUv).rgb, 1.0) * (1.0 - uInk), 1.0); }`,
     }));
     this.composite.frustumCulled = false;
     this.compositeScene.add(this.composite);
+    // Composite, Light ("ink on paper"): the same light buffer read as ink soaking into the paper.
+    // Each colour becomes a deep ink of the same hue (its complementary channels absorbed), and
+    // the paper is multiplied by exp(-absorbance): layers of ink compound, so busy corridors
+    // deepen toward near-black instead of whitening, and the bloom becomes a soft coloured bleed.
+    this.inkPass = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.ShaderMaterial({
+      uniforms: { tLight: { value: null }, uInk: this.uniforms.uInk },
+      depthTest: false, depthWrite: false, transparent: true,
+      blending: THREE.CustomBlending, blendEquation: THREE.AddEquation, blendSrc: THREE.ZeroFactor, blendDst: THREE.SrcColorFactor,
+      vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+      fragmentShader: /* glsl */ `
+        uniform sampler2D tLight; uniform float uInk; varying vec2 vUv;
+        void main() {
+          vec3 c = max(texture2D(tLight, vUv).rgb, 0.0);
+          float m = max(c.r, max(c.g, c.b));
+          // Hue of the light at full strength, then a deep ink of it (lightness lowered, chroma kept).
+          vec3 hue = c / max(m, 1e-4);
+          vec3 ink = pow(hue, vec3(3.0)) * 0.5;
+          // Faint light (the outer bloom) barely marks the paper; lines and dots print solidly.
+          float k = smoothstep(0.02, 0.35, m) * 2.6;
+          vec3 absorb = (1.0 - ink) * m * k;
+          gl_FragColor = vec4(mix(vec3(1.0), exp(-absorb), uInk), 1.0);
+        }`,
+    }));
+    this.inkPass.frustumCulled = false;
+    this.inkScene.add(this.inkPass);
 
     this.buildTargets();
     this.resize();
@@ -160,6 +204,17 @@ export class Engine {
     this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.85, 0.35, 0.04);
     this.resolve.material.uniforms.tLight.value = this.lightRT.texture;
     this.composite.material.uniforms.tLight.value = this.resolveRT.texture;
+    this.inkPass.material.uniforms.tLight.value = this.resolveRT.texture;
+  }
+
+  /** Theme: 0 = Dark (light on a dark map), 1 = Light (ink on paper); anything between crossfades. */
+  setInk(ink: number) {
+    const k = Math.min(1, Math.max(0, ink));
+    this.uniforms.uInk.value = k;
+    const d = PALETTE.dark, l = PALETTE.light, p = this.palette;
+    for (const key of Object.keys(p) as (keyof Palette)[]) p[key].lerpColors(d[key], l[key], k);
+    // On paper the bloom is a slight bleed, not a halo: a wide glow would grey the whole sheet.
+    this.bloom.strength = 0.85 + (0.25 - 0.85) * k;
   }
 
   resize() {
@@ -250,7 +305,9 @@ export class Engine {
     r.setRenderTarget(null);
     r.render(this.base, this.camera);
     r.autoClear = false;
-    r.render(this.compositeScene, this.orthoCam);
+    const ink = this.uniforms.uInk.value;
+    if (ink > 0.001) r.render(this.inkScene, this.orthoCam);
+    if (ink < 0.999) r.render(this.compositeScene, this.orthoCam);
     r.autoClear = true;
   }
 }

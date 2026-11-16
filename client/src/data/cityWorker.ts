@@ -24,13 +24,14 @@ self.onmessage = async (e: MessageEvent<{ req: number; id: string }>) => {
     if (!res.ok) throw new Error(`city ${id}: HTTP ${res.status}`);
     const meta = await res.json();
     const [pts, lines, chains] = await Promise.all(['points.bin', 'lines.bin', 'chains.bin'].map((f) => bin(`/api/city/${id}/${f}`)));
-    const ribbon = buildRibbon(new Float32Array(lines), new Uint32Array(chains));
+    const lineV = new Float32Array(lines), chainV = new Uint32Array(chains);
+    const ribbon = buildRibbon(lineV, chainV);
     const shapes = meta.shapes as { start: number; count: number; length: number; route: number }[];
     const tab = new Float32Array(shapes.length * 4);
     shapes.forEach((s, i) => { tab[i * 4] = s.start; tab[i * 4 + 1] = s.count; tab[i * 4 + 2] = s.length; tab[i * 4 + 3] = s.route; });
     const shapePts = pad(new Float32Array(pts), 2048), shapeTab = pad(tab, 1024);
-    const transfer = [ribbon.pos, ribbon.prev, ribbon.next, ribbon.side, ribbon.route, ribbon.index, shapePts.data, shapeTab.data].map((a) => a.buffer);
-    (self as unknown as Worker).postMessage({ req, ok: true, meta, ribbon, shapePts, shapeTab }, transfer);
+    const transfer = [ribbon.pos, ribbon.prev, ribbon.next, ribbon.side, ribbon.route, ribbon.index, shapePts.data, shapeTab.data, lineV, chainV].map((a) => a.buffer);
+    (self as unknown as Worker).postMessage({ req, ok: true, meta, ribbon, shapePts, shapeTab, lines: lineV, chains: chainV }, transfer);
   } catch (err) {
     (self as unknown as Worker).postMessage({ req, ok: false, error: (err as Error).message });
   }

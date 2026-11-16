@@ -24,7 +24,7 @@ const LINGER_MS = 15_000;
 
 const smooth = (a: number, b: number, x: number) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 
-class CityDetail {
+export class CityDetail {
   readonly group = new THREE.Group();
   readonly routes: RouteState;
   readonly lines: ReturnType<typeof routeLines>;
@@ -93,10 +93,15 @@ export class CityManager {
   readonly cities = new Map<string, CityEntry>();
   modes: Record<Mode, boolean> = { subway: true, rail: true, bus: true, tram: true };
   photonBudget = 20000;
+  /** Seconds on the client time base: live time, or a time-lapse's virtual time. */
+  clock: () => number;
+  /** Cities whose live updates are held back (a time-lapse is replaying them). */
+  readonly paused = new Set<string>();
   private lastSun = 0;
   onChange: () => void = () => {};
 
   constructor(private u: SharedUniforms, private cam: GlobeCamera, private live: LiveClient) {
+    this.clock = () => live.now();
     this.warmUp();
     void this.refreshList();
   }
@@ -114,8 +119,9 @@ export class CityManager {
     const data: CityData = {
       id: '_warmup', name: '', country: '', tz: 'UTC', origin: { lon: 0, lat: 0 }, bbox: [0, 0, 0, 0],
       routes: [{ id: 'w', feed: 'w', short: '', long: '', mode: 'bus', light: [1, 1, 1], ink: [0, 0, 0], official: false }],
-      shapes: [{ id: 'w', route: 0, start: 0, count: 2, length: 100 }], attribution: [],
+      shapes: [{ id: 'w', route: 0, start: 0, count: 2, length: 100 }], attribution: [], feeds: [],
       ribbon: buildRibbon(new Float32Array([0, 0, 1e-5, 0]), new Uint32Array([0, 2, 0])),
+      lines: new Float32Array([0, 0, 1e-5, 0]), chains: new Uint32Array([0, 2, 0]),
       shapePts: pts, shapeTab: tab,
     };
     const d = new CityDetail(data, this.u, layerUniforms(), this.modes);
@@ -177,11 +183,13 @@ export class CityManager {
   }
 
   vehicles(id: string, list: WireVehicle[]) {
+    if (this.paused.has(id)) return;
     const d = this.cities.get(id)?.detail;
     if (d) d.vehicles.update(list, this.live.now(), this.live.toLocal);
   }
 
   gone(id: string, keys: string[]) {
+    if (this.paused.has(id)) return;
     this.cities.get(id)?.detail?.vehicles.end(keys, this.live.now());
   }
 
@@ -227,7 +235,7 @@ export class CityManager {
       this.lastSun = now;
     }
     const mpp = cam.metresPerPixel();
-    const tNow = this.live.now();
+    const tNow = this.clock();
     for (const e of this.cities.values()) {
       const o = e.info.origin;
       e.dist = arc(f.lon, f.lat, o.lon * D2R, o.lat * D2R) * R;

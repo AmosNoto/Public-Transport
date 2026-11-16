@@ -58,7 +58,7 @@ export function earthMesh(u: SharedUniforms, lu: LayerUniforms, colors: { day: T
         // Beyond the web-mercator limit no water tiles exist; the Arctic is ocean.
         bool polarSea = vGeo.y > 1.4844;
         vec3 c = polarSea ? mix(uPolar, uPolarNight, n) : mix(uDay, uNight, n);
-        c += vec3(0.055, 0.075, 0.1) * vRim * (1.0 - 0.6 * n);
+        c += rimOf(vRim, n);
         gl_FragColor = vec4(c, 1.0);
       }`,
   });

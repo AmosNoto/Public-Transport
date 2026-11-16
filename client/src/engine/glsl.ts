@@ -57,7 +57,12 @@ vec2 geoOf(vec2 rel) {
 
 export const SUN = /* glsl */ `
 uniform vec2 uSun;         // subsolar point (lat, lon) in radians
-uniform float uDayNight;   // 1 = shade by real sun (Auto theme); 0 = no day/night
+uniform float uDayNight;   // 1 = shade by real sun; 0 = no day/night
+uniform float uInk;        // 0 = Dark theme, 1 = Light (ink on paper)
+// The globe's limb catches light on the dark map, and falls into a soft shadow on paper.
+vec3 rimOf(float rim, float n) {
+  return mix(vec3(0.055, 0.075, 0.1) * (1.0 - 0.6 * n), vec3(-0.07, -0.06, -0.045), uInk) * rim;
+}
 // 1 in full night, 0 in daylight, with a soft twilight band around the terminator.
 float nightOf(vec2 geo) {
   float c = sin(geo.y) * sin(uSun.x) + cos(geo.y) * cos(uSun.x) * cos(geo.x - uSun.y);

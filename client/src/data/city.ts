@@ -82,7 +82,12 @@ export interface CityData {
   routes: RouteInfo[];
   shapes: ShapeInfo[];
   attribution: Credit[];
+  /** Feed id → operator name, for vehicle and route cards. */
+  feeds: { id: string; agency: string }[];
   ribbon: Ribbon;
+  /** Route network (origin-relative x, y per vertex) and chains (start, count, route), for picking. */
+  lines: Float32Array;
+  chains: Uint32Array;
   shapePts: THREE.DataTexture;
   shapeTab: THREE.DataTexture;
 }
@@ -118,6 +123,8 @@ export function loadCity(id: string): Promise<CityData> {
       p.resolve({
         ...m.meta,
         ribbon: m.ribbon,
+        lines: m.lines,
+        chains: m.chains,
         shapePts: floatTexture(m.shapePts.data, 2048, m.shapePts.height),
         shapeTab: floatTexture(m.shapeTab.data, 1024, m.shapeTab.height),
       });

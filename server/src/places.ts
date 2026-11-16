@@ -15,6 +15,7 @@ import type { WebSocket } from 'ws';
 import { config } from './config.ts';
 import { loadIndex, readSummary, type CityIndex, type CitySummary } from './static/gtfs.ts';
 import { LiveCity, type VehicleState } from './live.ts';
+import { History } from './history.ts';
 import { FeedFallback, FORCED } from './fallback.ts';
 import { gtfsRtAdapter } from './adapters/gtfs-rt.ts';
 import { hslMqttAdapter } from './adapters/hsl-mqtt.ts';
@@ -53,6 +54,8 @@ export class Place {
   /** Latest raw fix per vehicle, from every source, whether or not the index is loaded. */
   readonly raw = new Map<string, VehicleFix>();
   readonly adapters: SourceAdapter[] = [];
+  /** Recent live positions, for time-lapse. */
+  readonly history = new History(config.historyMinutes * 60, config.historyStepS);
   /** Compact glow, built on first request. */
   glowBin?: Buffer;
   waiters: (() => void)[] = [];
@@ -148,6 +151,7 @@ export class Places {
   }
 
   private onFixes(p: Place, fixes: VehicleFix[]) {
+    p.history.add(fixes);
     for (const f of fixes) {
       const k = `${f.feed}:${f.vid}`;
       const prev = p.raw.get(k);
@@ -203,6 +207,7 @@ export class Places {
     const now = Date.now() / 1000;
     for (const p of this.all.values()) {
       for (const [k, f] of p.raw) if (now - f.ts > FORGET_S) p.raw.delete(k);
+      p.history.trim(now);
       if (!p.live) continue;
       if (p.subscribers.size) p.lastUsed = now;
       else if (now - p.lastUsed > LINGER_S && !p.loading) { this.unload(p); continue; }

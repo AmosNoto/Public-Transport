@@ -15,6 +15,10 @@ export const config = {
   catalog: (process.env.CATALOG ?? 'on').toLowerCase() !== 'off',
   /** Timetables larger than this are not downloaded (memory needed to index them grows with size). */
   maxStaticBytes: Math.max(1, Number(process.env.MAX_STATIC_MB ?? 200)) * 1e6,
+  /** Minutes of live positions every place keeps for time-lapse replay. */
+  historyMinutes: Math.max(5, Number(process.env.HISTORY_MINUTES ?? 60)),
+  /** Keep at most one position per vehicle this often (seconds) in that history. */
+  historyStepS: Math.max(1, Number(process.env.HISTORY_STEP_S ?? 15)),
   /** Heap limit for each timetable build (worker thread), in MB. */
   buildMemoryMb: Math.max(256, Number(process.env.BUILD_MEMORY_MB ?? 1536)),
   userAgent: `Afterglow/0.1 (live transit visualisation${process.env.USER_AGENT_CONTACT ? '; ' + process.env.USER_AGENT_CONTACT : ''})`,

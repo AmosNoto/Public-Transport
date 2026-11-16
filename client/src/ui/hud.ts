@@ -189,9 +189,16 @@ export class Hud {
     this.el('count-world').textContent = fmt(worldLive);
   }
 
-  private tick() {
+  /** Epoch seconds to show instead of now (a time-lapse's virtual time), or null. */
+  clockOverride: number | null = null;
+
+  /** The place's time zone (for replay labels). */
+  get zone() { return this.tz ?? 'UTC'; }
+
+  tick() {
     const tz = this.tz ?? 'UTC';
-    const t = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: tz }).format(new Date());
+    const at = this.clockOverride !== null ? new Date(this.clockOverride * 1000) : new Date();
+    const t = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: tz }).format(at);
     this.el('city-time').textContent = this.tz ? t : `${t} UTC`;
   }
 }

@@ -15,6 +15,8 @@ export class RouteState {
   private data: Float32Array;
   /** Active vehicles per route, from the live stream. */
   readonly active: Uint16Array;
+  /** Route under the pointer in interactive mode (-1: none): it brightens, the rest recede. */
+  highlight = -1;
 
   constructor(private city: CityData) {
     const n = city.routes.length, h = Math.max(1, Math.ceil(n / 1024));
@@ -30,7 +32,9 @@ export class RouteState {
       const c = r.light;
       d[i * 4] = c[0]; d[i * 4 + 1] = c[1]; d[i * 4 + 2] = c[2];
       // Routes in service glow fully; routes with nothing running sit as faint outlines.
-      d[i * 4 + 3] = modes[r.mode] ? MODE_WEIGHT[r.mode] * (this.active[i] > 0 ? 1 : 0.18) : 0;
+      let a = modes[r.mode] ? MODE_WEIGHT[r.mode] * (this.active[i] > 0 ? 1 : 0.18) : 0;
+      if (this.highlight >= 0 && a > 0) a = i === this.highlight ? Math.max(1.4, a * 1.8) : a * 0.22;
+      d[i * 4 + 3] = a;
     });
     this.texture.needsUpdate = true;
   }

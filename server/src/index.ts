@@ -14,7 +14,7 @@ import { cityDefs } from './cities/index.ts';
 import { discover, CATALOG_ATTRIBUTION, type Discovery } from './catalog/mobilitydb.ts';
 import { readGlow, type CityIndex } from './static/gtfs.ts';
 import { waterTile, BASEMAP_ATTRIBUTION, MAX_WATER_ZOOM } from './static/basemap.ts';
-import { toWire, type VehicleState } from './live.ts';
+import { toWire, LiveCity, type VehicleState } from './live.ts';
 import { toRel } from './geo.ts';
 import { Places, type Place } from './places.ts';
 
@@ -96,6 +96,7 @@ app.get<{ Params: { id: string } }>('/api/city/:id', async (req, reply) => {
   return {
     id: p.def.id, name: p.def.name, country: p.def.country, tz: p.def.tz, origin: p.def.origin, bbox: ix.bbox,
     routes: ix.routes, shapes: ix.shapes, attribution: attribution(p),
+    feeds: p.def.feeds.map((f) => ({ id: f.id, agency: f.agency })),
   };
 });
 
@@ -173,6 +174,38 @@ app.get<{ Querystring: { ids?: string } }>('/api/glows.bin', async (req, reply) 
   return reply.send(Buffer.concat(parts));
 });
 
+/**
+ * Time-lapse: the place's recent live positions, snapped by a fresh snapper exactly as live data
+ * is. Binary: Uint32 header length, a JSON header {keys, from, to}, then 36-byte records
+ * (Uint32 key, Uint32 route, Int32 shape, Float32 d, Float32 v, Uint32 ts, Float32 rx, Float32 ry,
+ * Uint32 flags), oldest first.
+ */
+app.get<{ Params: { id: string }; Querystring: { minutes?: string } }>('/api/city/:id/history.bin', async (req, reply) => {
+  const p = await loaded(req.params.id);
+  if (!p) return reply.code(404).send({ error: 'unknown or unavailable place' });
+  const now = Date.now() / 1000;
+  const minutes = Math.min(config.historyMinutes, Math.max(1, Number(req.query.minutes ?? config.historyMinutes)));
+  const from = now - minutes * 60;
+  const snapper = new LiveCity(p.index!);
+  const keys = new Map<string, number>();
+  const recs: VehicleState[] = [];
+  for (const b of p.history.batches(from)) for (const s of snapper.apply(b.fixes, b.t)) recs.push({ ...s });
+  for (const s of recs) if (!keys.has(s.key)) keys.set(s.key, keys.size);
+  const header = Buffer.from(JSON.stringify({ keys: [...keys.keys()], from: Math.round(from), to: Math.round(now), oldest: p.history.oldest }));
+  const out = Buffer.alloc(4 + header.length + recs.length * 36);
+  out.writeUInt32LE(header.length, 0);
+  header.copy(out, 4);
+  let o = 4 + header.length;
+  for (const s of recs) {
+    out.writeUInt32LE(keys.get(s.key)!, o); out.writeUInt32LE(s.route, o + 4); out.writeInt32LE(s.shape, o + 8);
+    out.writeFloatLE(s.d, o + 12); out.writeFloatLE(s.v, o + 16); out.writeUInt32LE(Math.round(s.ts), o + 20);
+    out.writeFloatLE(s.rx, o + 24); out.writeFloatLE(s.ry, o + 28); out.writeUInt32LE(s.flags, o + 32);
+    o += 36;
+  }
+  reply.header('Content-Type', 'application/octet-stream').header('Cache-Control', 'no-cache');
+  return reply.send(out);
+});
+
 app.get<{ Params: { z: string; x: string; y: string } }>('/api/water/:z/:x/:y', async (req, reply) => {
   const z = Number(req.params.z), x = Number(req.params.x), y = Number(req.params.y);
   if (![z, x, y].every(Number.isInteger) || z < 0 || z > MAX_WATER_ZOOM || x < 0 || y < 0 || x >= 2 ** z || y >= 2 ** z) {
@@ -192,7 +225,10 @@ app.get('/api/health', async () => {
   const mem = process.memoryUsage();
   return {
     now,
-    server: { uptime: Math.round(process.uptime()), rssMB: Math.round(mem.rss / 1e6), heapMB: Math.round(mem.heapUsed / 1e6) },
+    server: {
+      uptime: Math.round(process.uptime()), rssMB: Math.round(mem.rss / 1e6), heapMB: Math.round(mem.heapUsed / 1e6),
+      historyMB: Math.round([...places.all.values()].reduce((n, p) => n + p.history.bytes, 0) / 1e6), historyMinutes: config.historyMinutes,
+    },
     catalog: {
       enabled: config.catalog, error: discoveryError, fetchedAt: discovery?.fetchedAt ?? null,
       places: discovery?.cities.length ?? 0, attribution: CATALOG_ATTRIBUTION,

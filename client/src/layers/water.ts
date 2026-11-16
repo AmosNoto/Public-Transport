@@ -54,7 +54,7 @@ export class WaterTiles {
         void main() {
           if (vVis < 0.5) discard; // far side of the globe
           float n = nightOf(vGeo);
-          vec3 c = mix(uDay, uNight, n) + vec3(0.055, 0.075, 0.1) * vRim * (1.0 - 0.6 * n);
+          vec3 c = mix(uDay, uNight, n) + rimOf(vRim, n);
           gl_FragColor = vec4(c, 1.0);
         }`,
     });
@@ -149,6 +149,7 @@ export class WaterTiles {
     const m = this.proto.clone();
     // Clone copies uniform values; re-link the shared ones so they keep updating.
     for (const k of Object.keys(this.u) as (keyof SharedUniforms)[]) m.uniforms[k] = this.u[k];
+    m.uniforms.uDay = this.proto.uniforms.uDay; m.uniforms.uNight = this.proto.uniforms.uNight; // shared palette
     m.uniforms.uDLon = { value: 0 }; m.uniforms.uM0 = { value: 0 }; m.uniforms.uOff = { value: new THREE.Vector2() };
     const mesh = new THREE.Mesh(g, m);
     mesh.frustumCulled = false;

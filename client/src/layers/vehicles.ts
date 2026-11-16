@@ -189,6 +189,17 @@ export class Vehicles {
     this.aA.needsUpdate = this.aB.needsUpdate = this.aC.needsUpdate = true;
   }
 
+  /** Remove every vehicle at once (entering or leaving a time-lapse). */
+  clear() {
+    this.slots.clear();
+    this.free = [];
+    this.count = 0;
+    (this.aA.array as Float32Array).fill(0);
+    for (let i = 0; i < this.cap; i++) (this.aA.array as Float32Array)[i * 4 + 3] = -1e6;
+    this.aA.needsUpdate = true;
+    this.geo.instanceCount = 0;
+  }
+
   /** Recycle slots whose dots have fully faded. */
   sweep(now: number) {
     for (const [k, s] of this.slots) {
@@ -214,6 +225,41 @@ export class Vehicles {
     }
     return { perRoute, perShape, total, scheduled };
   }
+
+  /** Where a vehicle is drawn at time `now`, origin-relative (mirrors the vertex shader). */
+  private drawnAt(s: Slot, now: number): [number, number] {
+    if (s.shape < 0) {
+      const k = Math.min(1, Math.max(0, (now - s.tC) / Math.max(s.glide, 0.5)));
+      return [s.px + (s.rx - s.px) * k, s.py + (s.ry - s.py) * k];
+    }
+    const sh = this.city.shapes[s.shape], P = this.city.shapePts.image.data as Float32Array;
+    const d = distanceAt({ ...s, v: s.stopped ? 0 : s.v }, now, sh.length);
+    let lo = sh.start, hi = sh.start + sh.count - 1;
+    while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (P[mid * 4 + 2] <= d) lo = mid; else hi = mid; }
+    const c0 = P[lo * 4 + 2], c1 = P[hi * 4 + 2], t = c1 > c0 ? Math.min(1, Math.max(0, (d - c0) / (c1 - c0))) : 0;
+    return [P[lo * 4] + (P[hi * 4] - P[lo * 4]) * t, P[lo * 4 + 1] + (P[hi * 4 + 1] - P[lo * 4 + 1]) * t];
+  }
+
+  /**
+   * The visible vehicle nearest an origin-relative point, within `maxM` metres. `kx`, `ky`
+   * convert relative units to metres there (R·cos φ for both, in Web Mercator).
+   */
+  nearest(rx: number, ry: number, now: number, k: number, maxM: number, modes: Record<string, boolean>):
+    { key: string; route: number; shape: number; v: number; ageS: number; stopped: boolean; scheduled: boolean; x: number; y: number } | null {
+    let best: Slot | null = null, bestD = maxM, bx = 0, by = 0;
+    for (const s of this.slots.values()) {
+      if (now - s.tF > FADE_START || now < s.born) continue;
+      if (!modes[this.city.routes[s.route]?.mode]) continue;
+      const [x, y] = this.drawnAt(s, now);
+      const dm = Math.hypot((x - rx) * k, (y - ry) * k);
+      if (dm < bestD) { bestD = dm; best = s; bx = x; by = y; }
+    }
+    if (!best) return null;
+    return { key: best.key, route: best.route, shape: best.shape, v: best.stopped ? 0 : best.v, ageS: Math.max(0, now - best.tF), stopped: best.stopped, scheduled: best.scheduled, x: bx, y: by };
+  }
+
+  /** Current dot diameter in CSS pixels. */
+  get dotSize(): number { return (this.mesh.material as THREE.ShaderMaterial).uniforms.uSize.value; }
 
   /** Zoomed out, hundreds of dots share a few pixels: shrink and dim them so a city stays light, not glare. */
   setZoom(metresPerPixel: number) {

@@ -37,6 +37,16 @@
     <p id="legend" class="legend" hidden></p>
     <div class="row">
       <div id="modes" class="modes" role="group" aria-label="Transport modes"></div>
+      <button id="inspect-btn" class="mode" aria-pressed="false" aria-label="Interactive: point at vehicles and lines to see what they are" title="Interactive: point at vehicles and lines to see what they are">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 3.5l9.5 6-4.2 1.1 2.6 4.6-1.9 1.1-2.6-4.6L5 14.6Z"/></svg>
+      </button>
+      <button id="timelapse-btn" class="mode" aria-pressed="false" aria-label="Time-lapse: replay this city's last hour" title="Time-lapse: replay this city's last hour">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3.5 10a6.5 6.5 0 1 0 1.9-4.6"/><path d="M3.2 3.6v2.6h2.6"/><path d="M10 6.5V10l2.4 1.6"/></svg>
+      </button>
+      <button id="tour-btn" class="mode" aria-pressed="false" aria-label="Auto-tour: drift between busy places (any input stops it)" title="Auto-tour: drift between busy places (any input stops it)">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7"/><path d="M8.3 7.2v5.6l4.6-2.8Z" fill="currentColor"/></svg>
+      </button>
+      <button id="theme-btn" class="mode on" aria-label="Theme" title="Theme"></button>
       <button id="credits-btn" class="mode on" aria-label="Data sources and credits" title="Data sources and credits">
         <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7"/><path d="M10 9v5M10 6.5v.1"/></svg>
       </button>

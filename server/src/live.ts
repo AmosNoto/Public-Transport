@@ -54,8 +54,8 @@ export class LiveCity {
     });
   }
 
-  /** Apply a batch of fixes; returns the vehicles that changed. */
-  apply(fixes: VehicleFix[]): VehicleState[] {
+  /** Apply a batch of fixes; returns the vehicles that changed. `now` is passed when replaying history. */
+  apply(fixes: VehicleFix[], now = Date.now() / 1000): VehicleState[] {
     const changed: VehicleState[] = [];
     const ix = this.idx;
     for (const f of fixes) {
@@ -108,7 +108,6 @@ export class LiveCity {
       this.vehicles.set(key, s);
       changed.push(s);
     }
-    const now = Date.now() / 1000;
     for (const [k, s] of this.vehicles) if (now - s.ts > FORGET_S) this.vehicles.delete(k);
     return changed;
   }
