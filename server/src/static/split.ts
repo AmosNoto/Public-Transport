@@ -38,12 +38,14 @@ export async function splitRegions(city: CityDef, maxBytes: number, exclude: [nu
   let bytes = 0;
   for (const feed of city.feeds) {
     const file = staticZipPath(feed.zipKey ?? city.id, feed.id);
+    // The publisher's own copy first (the catalog mirror can lag by months), then the mirror.
+    const first = feed.staticAlt ?? feed.static, second = feed.staticAlt ? feed.static : undefined;
     let buf: Buffer;
     try {
-      buf = await fetchCached(feed.static, file, 24 * 3600, feed.staticHeaders, maxBytes);
+      buf = await fetchCached(first, file, 24 * 3600, feed.staticHeaders, maxBytes);
     } catch (e) {
-      if (!feed.staticAlt) throw e;
-      buf = await fetchCached(feed.staticAlt, file, 24 * 3600, feed.staticHeaders, maxBytes);
+      if (!second) throw e;
+      buf = await fetchCached(second, file, 24 * 3600, feed.staticHeaders, maxBytes);
     }
     bytes += buf.byteLength;
     let iLat = -1, iLon = -1, iType = -1;

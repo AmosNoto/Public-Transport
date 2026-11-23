@@ -88,7 +88,7 @@ export async function buildSchedule(ix: CityIndex, feed: FeedDef, nowS = Date.no
   const t0 = Date.now();
   const tz = ix.def.tz;
   const today = localDate(nowS, tz), yesterday = shiftDate(today, -1);
-  const zip = new Uint8Array(await fs.readFile(staticZipPath(ix.def.id, feed.id)));
+  const zip = new Uint8Array(await fs.readFile(staticZipPath(feed.zipKey ?? ix.def.id, feed.id)));
   const cal = zipRows(zip, 'calendar.txt'), calDates = zipRows(zip, 'calendar_dates.txt');
   const svcToday = activeServices(cal, calDates, today), svcYest = activeServices(cal, calDates, yesterday);
 

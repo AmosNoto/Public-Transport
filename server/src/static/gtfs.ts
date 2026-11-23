@@ -425,6 +425,17 @@ export async function readSummary(cityId: string): Promise<CitySummary | null> {
   } catch { return null; }
 }
 
+/** True when every service date in a timetable has passed (calendar end dates and exceptions). */
+export function serviceEnded(zip: Uint8Array): boolean {
+  let last = '';
+  const d = new Date(Date.now() - 2 * 86400_000);
+  const today = `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, '0')}${String(d.getUTCDate()).padStart(2, '0')}`;
+  let iEnd = -1, iDate = -1;
+  zipCsv(zip, 'calendar.txt', (col) => { iEnd = col('end_date'); }, (f) => { if (f[iEnd] > last) last = f[iEnd]; });
+  zipCsv(zip, 'calendar_dates.txt', (col) => { iDate = col('date'); }, (f) => { if (f[iDate] > last) last = f[iDate]; });
+  return !!last && last < today;
+}
+
 /** Median stop position and the agency's time zone, for places discovered from the catalog. */
 function placeOf(zips: Uint8Array[], box?: [number, number, number, number]): { origin: { lon: number; lat: number }; tz: string | null } {
   const lats: number[] = [], lons: number[] = [];
@@ -468,11 +479,26 @@ export async function prepareCity(city: CityDef): Promise<CitySummary> {
     if (key && feed.staticKey?.header) headers[feed.staticKey.header] = key;
     const redact = (e: unknown) => { if (key && e instanceof Error) e.message = e.message.split(key).join('***'); return e; };
     let buf: Buffer;
+    // The catalog's mirror can lag the publisher by months. Once it has served an expired
+    // timetable, this feed goes to the publisher's own URL first (remembered beside the zip).
+    const preferAlt = !!feed.staticAlt && (await fs.access(file + '.use-alt').then(() => true, () => false));
+    const first = preferAlt ? feed.staticAlt! : url, second = preferAlt ? url : feed.staticAlt;
     try {
-      buf = await fetchCached(url, file, 24 * 3600, headers, feed.maxBytes);
+      buf = await fetchCached(first, file, 24 * 3600, preferAlt ? feed.staticHeaders : headers, feed.maxBytes);
     } catch (e) {
-      if (!feed.staticAlt || e instanceof TooLargeError) throw redact(e);
-      buf = await fetchCached(feed.staticAlt, file, 24 * 3600, feed.staticHeaders, feed.maxBytes).catch((e2) => { throw redact(e2); });
+      if (!second || e instanceof TooLargeError) throw redact(e);
+      buf = await fetchCached(second, file, 24 * 3600, preferAlt ? headers : feed.staticHeaders, feed.maxBytes).catch((e2) => { throw redact(e2); });
+    }
+    if (second && serviceEnded(new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength))) {
+      // Expired: try the other URL, fresh (backdate our copy so it isn't answered "not modified").
+      try {
+        await fs.utimes(file, 0, 0);
+        const fresh = await fetchCached(second, file, 0, preferAlt ? headers : feed.staticHeaders, feed.maxBytes);
+        if (!serviceEnded(new Uint8Array(fresh.buffer, fresh.byteOffset, fresh.byteLength))) {
+          buf = fresh;
+          if (preferAlt) await fs.rm(file + '.use-alt', { force: true }); else await fs.writeFile(file + '.use-alt', second);
+        }
+      } catch { /* keep what we have */ }
     }
     bytes += buf.byteLength;
     zips.push(new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength));
