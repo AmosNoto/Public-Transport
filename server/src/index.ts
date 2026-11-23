@@ -12,10 +12,12 @@ import fastifyStatic from '@fastify/static';
 import { config } from './config.ts';
 import { cityDefs } from './cities/index.ts';
 import { discover, CATALOG_ATTRIBUTION, type Discovery } from './catalog/mobilitydb.ts';
-import { readGlow, type CityIndex } from './static/gtfs.ts';
+import { readGlow, loadStops, type CityIndex } from './static/gtfs.ts';
 import { waterTile, BASEMAP_ATTRIBUTION, MAX_WATER_ZOOM } from './static/basemap.ts';
 import { toWire, LiveCity, type VehicleState } from './live.ts';
 import { toRel } from './geo.ts';
+import { spectralHue, vivid } from './color.ts';
+import { GEONAMES_ATTRIBUTION } from './geonames.ts';
 import { Places, type Place } from './places.ts';
 
 function send(p: Place, msg: object) {
@@ -62,6 +64,7 @@ function attribution(p: Place) {
   return [
     ...p.def.feeds.map((f) => ({ name: f.attribution, license: f.license.name, url: f.license.url, legend: f.legend, legendUrl: f.legendUrl })),
     ...(p.def.source === 'catalog' ? [CATALOG_ATTRIBUTION] : []),
+    ...(p.def.splitFrom ? [GEONAMES_ATTRIBUTION] : []),
     { name: BASEMAP_ATTRIBUTION, license: 'ODbL', url: 'https://www.openstreetmap.org/copyright' },
   ];
 }
@@ -76,7 +79,9 @@ app.get('/api/cities', async () => {
   return [...places.all.values()].filter((p) => p.located && p.state !== 'skipped').map((p) => ({
     id: p.def.id, name: p.def.name, region: p.def.region ?? '', country: p.def.country, tz: p.def.tz, origin: p.def.origin,
     bbox: p.area, state: p.state, error: p.error ?? null, ...counts(p, now),
-    source: p.def.source, timetableOnly: !hasUsableLive(p), v: p.summary ? Math.round(p.summary.builtAt) : 0,
+    source: p.def.source, timetableOnly: !hasUsableLive(p),
+    // Glow version: the build stamp, or (for places with no timetable) every couple of minutes.
+    v: p.def.positionsOnly ? Math.floor(now / 120) : p.summary ? Math.round(p.summary.builtAt) : 0,
     attribution: attribution(p),
   }));
 });
@@ -122,9 +127,24 @@ app.get<{ Params: { id: string; file: string } }>('/api/city/:id/:file', async (
  *  is blurred by bloom, so this is plenty (and keeps all ~300 glows to ~2 MB, fine on a phone). */
 const GLOW_MAX = 1000;
 
+/** Glow of a place with no timetable: its vehicles where they are now, in its colour. */
+function positionsGlow(p: Place): Float32Array {
+  const now = Date.now() / 1000;
+  let h = 0;
+  for (const ch of p.def.feeds[0].id + p.def.feeds[0].agency) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  const c = vivid(spectralHue((h % 1000) / 1000));
+  const out: number[] = [];
+  for (const f of p.raw.values()) {
+    if (now - f.ts > 180 || !Number.isFinite(f.lat)) continue;
+    const [x, y] = toRel(p.def.origin, f.lon, f.lat);
+    out.push(x, y, c[0], c[1], c[2]);
+  }
+  return Float32Array.from(out);
+}
+
 async function glowBin(p: Place): Promise<Buffer> {
-  if (p.glowBin) return p.glowBin;
-  let all = await readGlow(p.summary!);
+  if (p.glowBin && !p.def.positionsOnly) return p.glowBin;
+  let all = p.def.positionsOnly ? positionsGlow(p) : await readGlow(p.summary!);
   // Keep the glow to the place's area (with a margin), so a metro cut from a national feed
   // doesn't glow along every intercity line that passes through it.
   if (p.area && p.def.feeds.every((f) => f.filter?.bbox)) {
@@ -164,7 +184,7 @@ app.get<{ Querystring: { ids?: string } }>('/api/glows.bin', async (req, reply) 
   for (const id of ids) {
     const p = places.all.get(id);
     let b: Buffer | null = null;
-    if (p?.summary) { try { b = await glowBin(p); } catch { b = null; } }
+    if (p?.summary || (p?.def.positionsOnly && p.located)) { try { b = await glowBin(p); } catch { b = null; } }
     const len = Buffer.alloc(4);
     len.writeUInt32LE(b ? b.length : 0);
     parts.push(len);
@@ -187,6 +207,7 @@ app.get<{ Params: { id: string }; Querystring: { minutes?: string } }>('/api/cit
   const minutes = Math.min(config.historyMinutes, Math.max(1, Number(req.query.minutes ?? config.historyMinutes)));
   const from = now - minutes * 60;
   const snapper = new LiveCity(p.index!);
+  if (p.progress) snapper.stops = p.live?.stops ?? (await loadStops(p.def).catch(() => null));
   const keys = new Map<string, number>();
   const recs: VehicleState[] = [];
   for (const b of p.history.batches(from)) for (const s of snapper.apply(b.fixes, b.t)) recs.push({ ...s });

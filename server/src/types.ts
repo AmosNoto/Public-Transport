@@ -33,6 +33,8 @@ export interface FeedDef {
   staticHeaders?: Record<string, string>;
   /** An API key the timetable download needs (same shape as a realtime source's key). */
   staticKey?: { env: string; param?: string; header?: string };
+  /** Share another place's downloaded zip (regions split from one national feed). */
+  zipKey?: string;
   /** Tried when `static` fails (e.g. the catalog's mirror is missing a file: use the publisher's URL). */
   staticAlt?: string;
   /** Live positions; empty or absent means the feed is shown from its timetable. */
@@ -65,6 +67,10 @@ export interface CityDef {
   origin: { lon: number; lat: number };
   /** Discovered places work out origin and time zone from their own timetable. */
   auto?: boolean;
+  /** A metro region split out of this (too large) national place. */
+  splitFrom?: string;
+  /** Live positions with no timetable to draw routes from: vehicles are shown as dots only. */
+  positionsOnly?: boolean;
   /** Environment variables (API keys) this city needs; without them it's left out entirely. */
   requires?: string[];
   source: 'curated' | 'catalog';
@@ -110,6 +116,12 @@ export interface VehicleFix {
   ts: number;
   stopId?: string;
   stopped?: boolean;
+  /**
+   * For feeds that report progress between stops instead of coordinates (NYC subway): the stop
+   * it was last stopped at (and when), and its next stops with predicted arrival times. lat/lon
+   * are NaN; the snapper places it along its route from these.
+   */
+  progress?: { at?: string; atTs?: number; next: [string, number][] };
 }
 
 export type FeedState = 'starting' | 'ok' | 'stale' | 'empty' | 'http-error' | 'decode-error' | 'network-error' | 'no-key' | 'timetable' | 'skipped';

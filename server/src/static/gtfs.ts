@@ -5,7 +5,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { zipCsv, zipRows } from './csv.ts';
+import { own, zipCsv, zipRows } from './csv.ts';
 import { config } from '../config.ts';
 import { makePolyline, simplifyIdx, toRel, type Polyline, EARTH_R } from '../geo.ts';
 import { hexToRgb, rgbToOklch, isNeutral, asLight, asInk, spectralPositions, spectralHue, vivid, type LCH } from '../color.ts';
@@ -162,7 +162,7 @@ function readFeed(zip: Uint8Array, feed: FeedDef, st: {
   let cR = -1, cS = -1, cT = -1, cD = -1;
   zipCsv(zip, 'trips.txt', (col) => { cR = col('route_id'); cS = col('shape_id'); cT = col('trip_id'); cD = col('direction_id'); }, (f) => {
     const ri = local.get(f[cR]);
-    if (ri !== undefined && cS >= 0 && f[cS]) shapeRoute.set(f[cS], ri);
+    if (ri !== undefined && cS >= 0 && f[cS]) shapeRoute.set(own(f[cS]), ri);
   });
 
   // Shapes, streamed shape by shape (GTFS files are normally grouped by shape_id).
@@ -194,8 +194,9 @@ function readFeed(zip: Uint8Array, feed: FeedDef, st: {
   let cId = -1, cLat = -1, cLon = -1, cSeq = -1;
   const shapesHeader = (col: (n: string) => number) => { cId = col('shape_id'); cLat = col('shape_pt_lat'); cLon = col('shape_pt_lon'); cSeq = col('shape_pt_sequence'); };
   zipCsv(zip, 'shapes.txt', shapesHeader, (f) => {
-    const id = f[cId];
+    let id = f[cId];
     if (id !== cur) {
+      id = own(id);
       if (cur !== undefined && !split.has(cur)) { finalize(cur, seq, lat, lon); done.add(cur); }
       cur = id; seq = []; lat = []; lon = [];
       if (done.has(id)) split.add(id); // file not grouped by shape: gather these in a second pass
@@ -209,7 +210,7 @@ function readFeed(zip: Uint8Array, feed: FeedDef, st: {
     const acc = new Map<string, { seq: number[]; lat: number[]; lon: number[] }>();
     zipCsv(zip, 'shapes.txt', shapesHeader, (f) => {
       if (!split.has(f[cId])) return;
-      let a = acc.get(f[cId]); if (!a) acc.set(f[cId], (a = { seq: [], lat: [], lon: [] }));
+      let a = acc.get(f[cId]); if (!a) acc.set(own(f[cId]), (a = { seq: [], lat: [], lon: [] }));
       a.seq.push(Number(f[cSeq])); a.lat.push(Number(f[cLat])); a.lon.push(Number(f[cLon]));
     });
     for (const [id, a] of acc) finalize(id, a.seq, a.lat, a.lon);
@@ -220,9 +221,9 @@ function readFeed(zip: Uint8Array, feed: FeedDef, st: {
     const ri = local.get(f[cR]);
     if (ri === undefined) return;
     const si = cS >= 0 ? localShape.get(f[cS]) : undefined;
-    st.trips.push([`${feed.id}:${f[cT]}`, ri, si ?? -1]);
+    st.trips.push([`${feed.id}:${own(f[cT])}`, ri, si ?? -1]);
     if (si !== undefined) {
-      const k = `${feed.id}:${f[cR]}:${cD >= 0 ? Number(f[cD] || 0) : 0}`;
+      const k = `${feed.id}:${own(f[cR])}:${cD >= 0 ? Number(f[cD] || 0) : 0}`;
       let m = st.dirUse.get(k); if (!m) st.dirUse.set(k, (m = new Map()));
       m.set(si, (m.get(si) ?? 0) + 1);
     }
@@ -423,13 +424,14 @@ export async function readSummary(cityId: string): Promise<CitySummary | null> {
 }
 
 /** Median stop position and the agency's time zone, for places discovered from the catalog. */
-function placeOf(zips: Uint8Array[]): { origin: { lon: number; lat: number }; tz: string | null } {
+function placeOf(zips: Uint8Array[], box?: [number, number, number, number]): { origin: { lon: number; lat: number }; tz: string | null } {
   const lats: number[] = [], lons: number[] = [];
   let tz: string | null = null;
   for (const zip of zips) {
     let iLat = -1, iLon = -1;
     zipCsv(zip, 'stops.txt', (col) => { iLat = col('stop_lat'); iLon = col('stop_lon'); }, (f) => {
       const la = Number(f[iLat]), lo = Number(f[iLon]);
+      if (box && (lo < box[0] || lo > box[2] || la < box[1] || la > box[3])) return; // a region: its own stops only
       if (Number.isFinite(la) && Number.isFinite(lo) && (la !== 0 || lo !== 0) && Math.abs(la) <= 90 && Math.abs(lo) <= 180) { lats.push(la); lons.push(lo); }
     });
     if (!tz) {
@@ -454,7 +456,7 @@ export async function prepareCity(city: CityDef): Promise<CitySummary> {
   const hashes: unknown[] = [];
   let bytes = 0;
   for (const feed of city.feeds) {
-    const file = staticZipPath(city.id, feed.id);
+    const file = staticZipPath(feed.zipKey ?? city.id, feed.id);
     // Apply the timetable's API key, if it needs one; never let the key reach a log or error.
     let url = feed.static;
     const headers = { ...feed.staticHeaders };
@@ -476,7 +478,7 @@ export async function prepareCity(city: CityDef): Promise<CitySummary> {
     hashes.push(feed.id, feed.static, crypto.createHash('sha1').update(buf).digest('hex'), feed.filter ?? null);
   }
   if (city.auto) {
-    const p = placeOf(zips);
+    const p = placeOf(zips, city.feeds.every((f) => f.filter?.bbox) ? city.feeds[0].filter!.bbox : undefined);
     city.origin = p.origin;
     city.tz = p.tz ?? 'UTC';
   }
@@ -506,6 +508,20 @@ export async function prepareCity(city: CityDef): Promise<CitySummary> {
     if (d.isDirectory() && d.name !== key) await fs.rm(path.join(parent, d.name), { recursive: true, force: true });
   }
   return summary;
+}
+
+/** Stop coordinates of a city's timetables, by `${feed}:${stop_id}` (for progress-reported feeds). */
+export async function loadStops(city: CityDef): Promise<Map<string, [number, number]>> {
+  const out = new Map<string, [number, number]>();
+  for (const feed of city.feeds) {
+    const zip = new Uint8Array(await fs.readFile(staticZipPath(feed.zipKey ?? city.id, feed.id)));
+    let iId = -1, iLat = -1, iLon = -1;
+    zipCsv(zip, 'stops.txt', (col) => { iId = col('stop_id'); iLat = col('stop_lat'); iLon = col('stop_lon'); }, (f) => {
+      const la = Number(f[iLat]), lo = Number(f[iLon]);
+      if (f[iId] && Number.isFinite(la) && Number.isFinite(lo)) out.set(`${feed.id}:${own(f[iId])}`, [la, lo]);
+    });
+  }
+  return out;
 }
 
 /** Load a built city's full index from its cache (main thread; a few hundred ms at most). */

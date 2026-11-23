@@ -134,6 +134,28 @@ export function allCityDefs(): CityDef[] {
       }],
     },
     {
+      // New York City subway. The MTA's realtime feeds report each train's progress (the station
+      // it last stopped at, and predicted arrivals at the next ones), not coordinates; the server
+      // places trains along the track from that timing (live.ts, byProgress). Keyless.
+      source: 'curated',
+      id: 'newyork', name: 'New York City', region: 'Subway', country: 'United States', tz: 'America/New_York',
+      origin: { lon: -73.9497, lat: 40.7179 },
+      feeds: [{
+        id: 'nyct-subway', agency: 'MTA New York City Transit',
+        mdb: ['516', '1630', '1631', '1632', '1633', '1634', '1635', '1636', '1637'],
+        static: 'https://rrgtfsfeeds.s3.amazonaws.com/gtfs_subway.zip',
+        realtime: [
+          ['nyct-1234567s', 'gtfs', '1 2 3 4 5 6 7 S'], ['nyct-ace', 'gtfs-ace', 'A C E'], ['nyct-bdfm', 'gtfs-bdfm', 'B D F M'],
+          ['nyct-g', 'gtfs-g', 'G'], ['nyct-jz', 'gtfs-jz', 'J Z'], ['nyct-nqrw', 'gtfs-nqrw', 'N Q R W'], ['nyct-l', 'gtfs-l', 'L'], ['nyct-si', 'gtfs-si', 'Staten Island Railway'],
+        ].map(([id, path, lines]) => ({ id, kind: 'gtfs-rt' as const, url: `https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2F${path}`, provider: `MTA subway (${lines})` })),
+        license: { name: 'MTA data feed terms and conditions', url: 'https://www.mta.info/developers/terms-and-conditions' },
+        attribution: 'MTA New York City Transit',
+        // The MTA's terms: say the data was obtained from the MTA and is redistributed from our own
+        // server, don't imply an MTA licence or that it's accurate or timely, flag possible lag.
+        legend: 'Subway data obtained from the MTA and redistributed by this app’s own server; not provided or endorsed by the MTA. Positions between stations are estimated and may not be accurate or real time.',
+      }],
+    },
+    {
       // The whole Bay Area from 511 SF Bay's regional feeds: one timetable and one realtime feed
       // covering ~38 agencies (Muni, BART, AC Transit, VTA, Caltrain, SamTrans, ferries…), with
       // operator-prefixed ids. Needs a free 511 key, whose default limit is 60 requests an hour,

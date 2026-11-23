@@ -102,7 +102,8 @@ export class Hud {
     const words = q.split(/\s+/).filter(Boolean);
     const items = this.cities
       .filter((c) => { const h = `${c.name} ${c.region} ${c.country}`.toLowerCase(); return words.every((w) => h.includes(w)); })
-      .sort((a, b) => (b.live + b.scheduled > 0 ? 1 : 0) - (a.live + a.scheduled > 0 ? 1 : 0) || a.name.localeCompare(b.name))
+      // Most live vehicles first, then those running from the timetable, then the rest by name.
+      .sort((a, b) => b.live - a.live || b.scheduled - a.scheduled || a.name.localeCompare(b.name))
       .slice(0, 150);
     for (const c of items) {
       const li = document.createElement('li');

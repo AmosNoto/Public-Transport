@@ -55,9 +55,40 @@ export function gtfsRtAdapter(): SourceAdapter {
         const now = Date.now() / 1000;
         const headerTs = Number(msg.header.timestamp ?? 0) || now;
         const fixes: VehicleFix[] = [];
+        // Upcoming stops per trip, for vehicles reported by progress rather than position.
+        const upcoming = new Map<string, [string, number][]>();
+        for (const e of msg.entity) {
+          const t = e.tripUpdate;
+          if (!t?.trip?.tripId || e.isDeleted) continue;
+          const next: [string, number][] = [];
+          for (const u of t.stopTimeUpdate ?? []) {
+            const at = Number(u.arrival?.time ?? u.departure?.time ?? 0);
+            if (!u.stopId || !at || at < now - 60) continue;
+            next.push([u.stopId, at]);
+            if (next.length === 3) break;
+          }
+          if (next.length) upcoming.set(t.trip.tripId, next);
+        }
         for (const e of msg.entity) {
           const v = e.vehicle;
-          if (!v?.position || e.isDeleted) continue;
+          if (!v || e.isDeleted) continue;
+          if (!v.position) {
+            // No coordinates: place it by its last stop and upcoming arrivals, if the feed gives them.
+            const tripId = v.trip?.tripId || undefined;
+            const next = tripId ? upcoming.get(tripId) : undefined;
+            const at = v.currentStatus === STOPPED_AT && v.stopId ? v.stopId : undefined;
+            if (!next && !at) continue;
+            fixes.push({
+              feed: ctx.feed.id,
+              // Entity ids in such feeds are often per-message; the trip is the stable identity.
+              vid: (ctx.feed.realtime!.length > 1 ? ctx.source.id + '/' : '') + (v.vehicle?.id || tripId || e.id),
+              label: v.vehicle?.label || undefined, tripId, routeId: v.trip?.routeId || undefined,
+              directionId: v.trip?.directionId ?? undefined, lat: NaN, lon: NaN, ts: Math.min(now, headerTs),
+              stopId: v.stopId || undefined, stopped: !!at && (!next || next[0][0] === at),
+              progress: { at, atTs: Number(v.timestamp ?? 0) || undefined, next: next ?? [] },
+            });
+            continue;
+          }
           const { latitude: lat, longitude: lon } = v.position;
           if (!Number.isFinite(lat) || !Number.isFinite(lon) || (lat === 0 && lon === 0)) continue;
           fixes.push({

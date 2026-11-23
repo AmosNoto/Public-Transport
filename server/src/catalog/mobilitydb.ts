@@ -72,7 +72,26 @@ export async function discover(covered: Set<string>, maxBytes: number): Promise<
     return r && r.data_type === 'gtfs' ? r : null;
   };
 
+  const keyed = new Map<string, KeyedSource>();
+  /** A realtime source from its catalog row (keyed sources read their key from KEY_<HOST>). */
+  const rtDef = (r: Row, place: string, cc: string): RealtimeDef => {
+      const url = r['urls.direct_download'];
+      const host = new URL(url).hostname;
+      const auth = r['urls.authentication_type'];
+      const def: RealtimeDef = { id: `rt${r.mdb_source_id}`, kind: 'gtfs-rt', url, provider: r.provider, headers: HOST_HEADERS[host] };
+      if (auth === '1' || auth === '2') {
+        const env = keyEnv(url);
+        const name = r['urls.api_key_parameter_name'] || (auth === '2' ? 'Authorization' : 'key');
+        def.key = { env, info: r['urls.authentication_info'] || undefined, ...(auth === '1' ? { param: name } : { header: name }) };
+        let k = keyed.get(env);
+        if (!k) keyed.set(env, (k = { env, host, info: def.key.info, feeds: [] }));
+        k.feeds.push({ id: r.mdb_source_id, provider: r.provider, place, country: countryName(cc) });
+      }
+      return def;
+    };
+
   const skipped: SkippedFeed[] = [];
+  const cities: CityDef[] = [];
   const groups = new Map<string, { st: Row; rts: Row[] }>();
   for (const r of rows) {
     if (r.data_type !== 'gtfs-rt' || !r.entity_type.split('|').includes('vp') || isDead(r)) continue;
@@ -81,7 +100,21 @@ export async function discover(covered: Set<string>, maxBytes: number): Promise<
     const refs = r.static_reference.split('|').filter(Boolean);
     if (covered.has(r.mdb_source_id) || refs.some((s) => covered.has(s))) continue;
     const st = refs.map(resolveStatic).find((x) => x) ?? null;
-    if (!st) { skipped.push({ id: r.mdb_source_id, provider: r.provider, url, reason: 'no timetable linked in the catalog (no routes to draw)' }); continue; }
+    if (!st) {
+      // No timetable: no routes to draw or snap to, but the vehicles themselves can still be shown.
+      const region = [r['location.municipality'], r['location.subdivision_name']].filter(Boolean).join(', ');
+      const license = r['urls.license'] || null;
+      cities.push({
+        id: `mdb-rt${r.mdb_source_id}`, name: r.name || short(r.provider), region, country: countryName(r['location.country_code']),
+        tz: 'UTC', origin: { lon: NaN, lat: NaN }, auto: true, positionsOnly: true, source: 'catalog',
+        feeds: [{
+          id: `r${r.mdb_source_id}`, agency: r.provider, static: '', realtime: [rtDef(r, region, r['location.country_code'])],
+          mdb: [r.mdb_source_id], license: license ? { name: 'Licence', url: license } : { name: 'No licence listed in the catalog' },
+          attribution: r.provider, note: 'No timetable in the catalog: vehicles are shown as dots, without routes.',
+        }],
+      });
+      continue;
+    }
     if (covered.has(st.mdb_source_id)) continue;
     const staticUrl = st['urls.latest'] || st['urls.direct_download'];
     const stAuth = st['urls.authentication_type'];
@@ -94,8 +127,7 @@ export async function discover(covered: Set<string>, maxBytes: number): Promise<
     g.rts.push(r);
   }
 
-  const keyed = new Map<string, KeyedSource>();
-  const cities: CityDef[] = [];
+
   const providerCount = new Map<string, number>();
   for (const { st } of groups.values()) providerCount.set(st.provider, (providerCount.get(st.provider) ?? 0) + 1);
 
@@ -104,21 +136,7 @@ export async function discover(covered: Set<string>, maxBytes: number): Promise<
     const cc = st['location.country_code'];
     const region = [st['location.municipality'], st['location.subdivision_name']].filter(Boolean).join(', ');
     const placeName = rts.length === 1 && rts[0].name ? rts[0].name : short(st.provider || rts[0].provider);
-    const realtime: RealtimeDef[] = rts.map((r) => {
-      const url = r['urls.direct_download'];
-      const host = new URL(url).hostname;
-      const auth = r['urls.authentication_type'];
-      const def: RealtimeDef = { id: `rt${r.mdb_source_id}`, kind: 'gtfs-rt', url, provider: r.provider, headers: HOST_HEADERS[host] };
-      if (auth === '1' || auth === '2') {
-        const env = keyEnv(url);
-        const name = r['urls.api_key_parameter_name'] || (auth === '2' ? 'Authorization' : 'key');
-        def.key = { env, info: r['urls.authentication_info'] || undefined, ...(auth === '1' ? { param: name } : { header: name }) };
-        let k = keyed.get(env);
-        if (!k) keyed.set(env, (k = { env, host, info: def.key.info, feeds: [] }));
-        k.feeds.push({ id: r.mdb_source_id, provider: r.provider, place: region, country: countryName(cc) });
-      }
-      return def;
-    });
+    const realtime: RealtimeDef[] = rts.map((r) => rtDef(r, region, cc));
     const license = rts.map((r) => r['urls.license']).find(Boolean) || st['urls.license'] || null;
     const feed: FeedDef = {
       id: `s${sid}`,

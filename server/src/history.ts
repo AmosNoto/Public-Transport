@@ -8,7 +8,7 @@
 
 import type { VehicleFix } from './types.ts';
 
-const CHUNK = 4096;
+const CHUNK = 1024;
 
 class Chunk {
   n = 0;
@@ -22,6 +22,9 @@ class Chunk {
   readonly dir = new Int8Array(CHUNK);
   readonly stopped = new Uint8Array(CHUNK);
   readonly speed = new Float32Array(CHUNK);
+  /** Progress-reported vehicles (no coordinates): last stop and when, next stops and arrivals.
+   *  Allocated only in chunks that hold such vehicles. */
+  prog?: { at: Uint32Array; atTs: Uint32Array; nx: Uint32Array; nt: Uint32Array };
 }
 
 /** Interned strings (vehicle, trip, route ids), so each record stores small numbers. */
@@ -60,6 +63,12 @@ export class History {
       c.trip[i] = this.strings.id(f.tripId); c.route[i] = this.strings.id(f.routeId);
       c.feed[i] = this.strings.id(f.feed);
       c.dir[i] = f.directionId ?? -1; c.stopped[i] = f.stopped ? 1 : 0; c.speed[i] = f.speed ?? NaN;
+      const pr = f.progress;
+      if (pr) {
+        const g = (c.prog ??= { at: new Uint32Array(CHUNK), atTs: new Uint32Array(CHUNK), nx: new Uint32Array(CHUNK * 3), nt: new Uint32Array(CHUNK * 3) });
+        g.at[i] = this.strings.id(pr.at); g.atTs[i] = pr.atTs ?? 0;
+        for (let k = 0; k < 3; k++) { g.nx[i * 3 + k] = this.strings.id(pr.next[k]?.[0]); g.nt[i * 3 + k] = pr.next[k]?.[1] ?? 0; }
+      }
     }
   }
 
@@ -70,7 +79,7 @@ export class History {
     if (!this.chunks.length && this.strings.size > 1) { this.strings = new Strings(); this.lastAt.clear(); }
   }
 
-  get bytes() { return this.chunks.length * CHUNK * 30; }
+  get bytes() { return this.chunks.reduce((n, c) => n + CHUNK * (c.prog ? 62 : 30), 0); }
   get oldest(): number | null { return this.chunks.length && this.chunks[0].n ? this.chunks[0].t[0] : null; }
 
   /** Fixes from `from` (epoch s) on, oldest first, in buckets of `bucketS` seconds. */
@@ -82,11 +91,18 @@ export class History {
         const t = c.t[i];
         if (t < from) continue;
         const key = L[c.vid[i]], feed = L[c.feed[i]];
-        all.push({
+        const fix: VehicleFix = {
           feed, vid: key.slice(feed.length + 1), tripId: L[c.trip[i]] || undefined, routeId: L[c.route[i]] || undefined,
           directionId: c.dir[i] >= 0 ? c.dir[i] : undefined, lat: c.lat[i], lon: c.lon[i], ts: t,
           speed: Number.isNaN(c.speed[i]) ? undefined : c.speed[i], stopped: c.stopped[i] === 1,
-        });
+        };
+        const g = c.prog;
+        if (g && Number.isNaN(c.lat[i])) {
+          const next: [string, number][] = [];
+          for (let k = 0; k < 3; k++) if (g.nx[i * 3 + k]) next.push([L[g.nx[i * 3 + k]], g.nt[i * 3 + k]]);
+          fix.progress = { at: L[g.at[i]] || undefined, atTs: g.atTs[i] || undefined, next };
+        }
+        all.push(fix);
       }
     }
     all.sort((a, b) => a.ts - b.ts);

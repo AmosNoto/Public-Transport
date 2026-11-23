@@ -9,7 +9,7 @@ A live, glowing map of public transit. Every real vehicle is a glowing dot; rout
 Two sources:
 
 - **Discovered.** At startup the server reads the [Mobility Database](https://mobilitydatabase.org) catalog and turns every active vehicle-positions feed linked to a timetable into a place: about 300 of them; in testing, 275 built across 21 countries, 188 with keyless live data. New catalog entries are picked up daily. See *Discovery* below.
-- **Curated.** Eight cities checked by hand (licence wording, the right timetable for the realtime feed, filters for national feeds, a non-GTFS-RT source). They take priority over the catalog's entries for the same feeds:
+- **Curated.** Nine cities checked by hand (licence wording, the right timetable for the realtime feed, filters for national feeds, a non-GTFS-RT source). They take priority over the catalog's entries for the same feeds:
 
 | City | Feeds | Live positions |
 |---|---|---|
@@ -20,9 +20,10 @@ Two sources:
 | Helsinki | HSL | live, ~1 update per vehicle per second (MQTT high-frequency positioning) |
 | Amsterdam | OVapi national feed, every route through the Amsterdam area | live |
 | Oslo | Ruter (via Entur) | from the timetable (Ruter publishes no open vehicle positions) |
+| New York City | MTA subway, all lines (8 feeds) | live, placed between stations from each train's last stop and predicted arrivals (the MTA publishes progress, not coordinates) |
 | San Francisco Bay Area | 511 SF Bay regional feed: ~38 agencies (Muni, BART, AC Transit, VTA, Caltrain, SamTrans, ferries…) | live, **needs a free 511 key** (`KEY_API_511_ORG`); left out without one |
 
-No API keys are needed for the first seven. Keys add the Bay Area and live positions for about 120 more feeds; see `KEYS.md` (generated from the catalog: `npm run keys`).
+No API keys are needed for the first eight. Keys add the Bay Area and live positions for about 120 more feeds; see `KEYS.md` (generated from the catalog: `npm run keys`).
 
 **Live or scheduled.** Each feed shows live positions while it has them. If a feed's live data stops, goes stale or is empty for two minutes (or the agency publishes no live feed at all), its vehicles are placed from the GTFS timetable instead: they move along their real route shapes at timetabled pace, drawn as dimmer hollow rings with no flowing light, and counted separately ("+ N scheduled").
 
@@ -105,7 +106,9 @@ docker compose up --build
 - The catalog's realtime rows carry no location; each points at the static feed it belongs to. The server follows that link (and the catalog's redirects from retired feeds), groups realtime feeds by timetable, and makes one place per timetable, named after the operator. The origin is the median stop and the time zone comes from the timetable's `agency.txt`.
 - Timetables come from the catalog's mirror (falling back to the publisher's URL), are refused over `MAX_STATIC_MB`, and are built one at a time in a worker thread so the live stream never stalls.
 - Every live feed is polled from startup (every 30 s while nobody's watching, every 10 s when someone is). That drives the counters, and decides which timetables are built first. ETags and backoff keep it polite.
-- Not shown, with reasons in diagnostics: realtime feeds the catalog links to no timetable (nothing to draw them on), timetables that need a key, ones over the size or memory limit, and catalog URLs that turn out to be dead or not GTFS-Realtime at all.
+- **No timetable linked** (about 30 feeds): shown anyway, as dots only. With no routes to draw or snap to, each operator's vehicles are drawn where they report themselves, in one colour. The place sits where its vehicles are, and its globe glow is their live positions.
+- **National timetables too big for one place** (over `MAX_STATIC_MB`, up to `MAX_SPLIT_MB`, default 700; e.g. all of Norway, New South Wales) are split into metro regions. The server clusters the feed's stops on a 10 km grid and builds each dense cluster as its own place from the one shared download, keeping only the routes through its area. Areas a curated city already covers are left out. Region names come from OpenStreetMap's Nominatim, looked up once each and cached. All regions share one connection to the national live feed. The first split downloads the whole national file (Norway: about 560 MB) and builds each region in turn, so expect it to take a while.
+- Not shown, with reasons in diagnostics: timetables that need a key, ones over the memory limit, and catalog URLs that turn out to be dead or not GTFS-Realtime at all.
 - Licences: each place credits its operator and links the licence the catalog lists. About 60 catalog places list no licence. They are shown with their operator credited and flagged "none listed" in diagnostics.
 
 ## How it works
@@ -126,5 +129,7 @@ Credits for the city in view are in the (i) panel; publishers who require a disp
 - Oslo: Ruter via Entur (NLOD)
 - San Francisco Bay Area: Metropolitan Transportation Commission, 511 SF Bay (511 Data Disseminator Agreement; "Data provided by 511.org", linked, shown whenever the Bay Area is in view)
 - Discovered places: each operator, with the licence link from the catalog (in the (i) panel and diagnostics)
+- New York City: MTA New York City Transit (MTA data feed terms; the required notice is shown whenever New York is in view)
+- Region names: OpenStreetMap Nominatim (ODbL)
 - Feed catalog: Mobility Database by MobilityData
 - Basemap: OpenFreeMap © OpenMapTiles, data © OpenStreetMap contributors (ODbL)

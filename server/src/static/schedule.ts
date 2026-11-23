@@ -2,7 +2,7 @@
 // timetable. Used for a feed only when it has no usable live positions.
 
 import fs from 'node:fs/promises';
-import { zipCsv, zipRows, type Row } from './csv.ts';
+import { own, zipCsv, zipRows, type Row } from './csv.ts';
 import { projectOnto } from '../geo.ts';
 import { staticZipPath, type CityIndex } from './gtfs.ts';
 import type { FeedDef } from '../types.ts';
@@ -97,11 +97,11 @@ export async function buildSchedule(ix: CityIndex, feed: FeedDef, nowS = Date.no
   const pending = new Map<string, { day: 0 | -1; route: number; shape: number; headsign?: string }>(); // ran yesterday too
   let tT = -1, tS = -1, tH = -1;
   zipCsv(zip, 'trips.txt', (col) => { tT = col('trip_id'); tS = col('service_id'); tH = col('trip_headsign'); }, (f) => {
-    const id = f[tT], key = `${feed.id}:${id}`;
+    const id = own(f[tT]), key = `${feed.id}:${id}`;
     const shape = ix.tripShape.get(key), route = ix.tripRoute.get(key);
     if (shape === undefined || route === undefined) return;
     const svc = f[tS];
-    const info = { route, shape, headsign: (tH >= 0 && f[tH]) || undefined };
+    const info = { route, shape, headsign: (tH >= 0 && f[tH] && own(f[tH])) || undefined };
     if (svcToday.has(svc)) want.set(id, { day: 0, ...info });
     else if (svcYest.has(svc)) want.set(id, { day: -1, ...info });
     if (svcToday.has(svc) && svcYest.has(svc)) pending.set(id, { day: -1, ...info });
@@ -110,7 +110,7 @@ export async function buildSchedule(ix: CityIndex, feed: FeedDef, nowS = Date.no
   const stops = new Map<string, [number, number]>();
   let sI = -1, sLa = -1, sLo = -1;
   zipCsv(zip, 'stops.txt', (col) => { sI = col('stop_id'); sLa = col('stop_lat'); sLo = col('stop_lon'); }, (f) => {
-    if (f[sLa] && f[sLo]) stops.set(f[sI], [+f[sLa], +f[sLo]]);
+    if (f[sLa] && f[sLo]) stops.set(own(f[sI]), [+f[sLa], +f[sLo]]);
   });
 
   // Stream stop_times, keeping only wanted trips.
@@ -123,8 +123,8 @@ export async function buildSchedule(ix: CityIndex, feed: FeedDef, nowS = Date.no
     const id = f[iTrip];
     if (!want.has(id)) return;
     let a = rows.get(id);
-    if (!a) rows.set(id, (a = []));
-    a.push([+f[iSeq], hms(f[iArr]), hms(f[iDep]), f[iStop]]);
+    if (!a) rows.set(own(id), (a = []));
+    a.push([+f[iSeq], hms(f[iArr]), hms(f[iDep]), own(f[iStop])]);
   });
 
   // Distances of stops along each shape, cached per stop pattern.

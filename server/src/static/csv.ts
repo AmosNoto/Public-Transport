@@ -82,6 +82,15 @@ export type Columns = (name: string) => number;
  * Stream every line of one file in a zip, as fields, to `onLine` (header line included).
  * Returns false if the file isn't in the zip.
  */
+const PIECE = 1 << 20, SLICE = 16 << 20;
+
+/**
+ * A standalone copy of a field, for keeping. V8 cuts substrings of 13+ characters as views into
+ * the string they came from, so a kept id would keep its whole 16 MB slice of the file alive
+ * (with 30,000 kept shape ids, that's the entire multi-GB file). Copy anything that's stored.
+ */
+export const own = (s: string): string => (s.length >= 13 ? (s + ' ').slice(0, -1) : s);
+
 function zipLines(zip: Uint8Array, name: string, onLine: (f: string[]) => void): boolean {
   const uz = new Unzip();
   uz.register(UnzipInflate);
@@ -101,12 +110,15 @@ function zipLines(zip: Uint8Array, name: string, onLine: (f: string[]) => void):
     };
     file.ondata = (err, chunk, final) => {
       if (err) throw err;
-      lines(dec.decode(chunk, { stream: !final }));
-      if (final && carry) { const c = carry; carry = ''; lines(c + '\n'); }
+      // Decode in slices: one string can't exceed ~512 MB, and a file can be bigger than that.
+      for (let o = 0; o < chunk.length; o += SLICE) lines(dec.decode(chunk.subarray(o, o + SLICE), { stream: true }));
+      if (final) { lines(dec.decode()); if (carry) { const c = carry; carry = ''; lines(c + '\n'); } }
     };
     file.start();
   };
-  uz.push(zip, true);
+  // Feed the zip in pieces, so files inflate as a stream rather than all at once in memory.
+  for (let o = 0; o < zip.length; o += PIECE) uz.push(zip.subarray(o, o + PIECE), o + PIECE >= zip.length);
+  if (!zip.length) uz.push(zip, true);
   return found;
 }
 
