@@ -21,10 +21,10 @@ Checked by hand: each key below was tested live, and its licence read.
 download a day. Run only one copy of the app per key, or ask 511 for a higher limit. With the key set, this city replaces
 the catalog's separate Bay Area entries (Muni, Caltrain, VTA, Marin Transit, SF Bay Ferry and others).
 
-## What the catalog lists (generated 2026-11-13)
+## What the catalog lists (generated 2026-11-23)
 
-From the [Mobility Database](https://mobilitydatabase.org) catalog: 288 places with vehicle positions beyond the curated cities,
-187 of them keyless. 120 more feeds need one of the 19 keys below. One key usually covers every feed on its host.
+From the [Mobility Database](https://mobilitydatabase.org) catalog: 317 places with vehicle positions beyond the curated cities,
+213 of them keyless. 123 more feeds need one of the 20 keys below. One key usually covers every feed on its host.
 
 These come from the catalog and have **not** been tested with real keys (I have none). Treat the sign-up links
 and feed counts as the catalog's claim; the diagnostics view is the check once a key is set.
@@ -33,7 +33,7 @@ Regenerate this file from the current catalog with `npm run keys`.
 
 | Variable | Feeds | Host | Sign up |
 |---|---:|---|---|
-| `KEY_API_GOSWIFT_LY` | 52 | api.goswift.ly | [link](https://goswift.ly/realtime-api-key) |
+| `KEY_API_GOSWIFT_LY` | 54 | api.goswift.ly | [link](https://goswift.ly/realtime-api-key) |
 | `KEY_OPENDATA_SAMTRAFIKEN_SE` | 30 | opendata.samtrafiken.se | [link](https://developer.trafiklab.se/register) |
 | `KEY_EXO_CHRONO_SAEIV_COM` | 9 | exo.chrono-saeiv.com | [link](https://exo.quebec/fr/a-propos/donnees-ouvertes/FormulaireDemandeAcces) |
 | `KEY_DATA_WALTTI_FI` | 4 | data.waltti.fi | [link](https://opendata.waltti.fi/getting-started#api-tokens) |
@@ -42,6 +42,7 @@ Regenerate this file from the current catalog with `npm run keys`.
 | `KEY_API_PUGETSOUND_ONEBUSAWAY_ORG` | 3 | api.pugetsound.onebusaway.org | [link](https://www.soundtransit.org/help-contacts/business-information/open-transit-data-otd/otd-downloads) |
 | `KEY_API_TRANSPORT_NSW_GOV_AU` | 3 | api.transport.nsw.gov.au | [link](https://opendata.transport.nsw.gov.au/data/user/register) |
 | `KEY_API_WMATA_COM` | 2 | api.wmata.com | [link](https://developer.wmata.com/signup/) |
+| `KEY_NEXTRIP_PUBLIC_API_AZURE_API_NET` | 1 | nextrip-public-api.azure-api.net | [link](https://nextrip-public-api.developer.azure-api.net/) |
 | `KEY_API_AT_GOVT_NZ` | 1 | api.at.govt.nz | [link](https://dev-portal.at.govt.nz/) |
 | `KEY_DEVELOPER_TRIMET_ORG` | 1 | developer.trimet.org | [link](https://developer.trimet.org/GTFS.shtml) |
 | `KEY_GO_BKK_HU` | 1 | go.bkk.hu | [link](https://fiok.bkk.hu/auth) |
@@ -57,6 +58,8 @@ Regenerate this file from the current catalog with `npm run keys`.
 
 ### `KEY_API_GOSWIFT_LY`
 
+- GoDurham
+- Devils Postpile National Monument — Reds Meadow Shuttle
 - North County Transit District (NCTD) (San Diego, California, United States)
 - Suburban Mobility Authority for Regional Transit (SMART) (Michigan, United States)
 - City of Corvallis (Corvallis, Oregon, United States)
@@ -180,6 +183,10 @@ Regenerate this file from the current catalog with `npm run keys`.
 ### `KEY_API_WMATA_COM`
 
 - Washington Metropolitan Area Transit Authority (WMATA) (Washington, District of Columbia, United States)
+
+### `KEY_NEXTRIP_PUBLIC_API_AZURE_API_NET`
+
+- Ottawa-Carleton Regional Transit Commission (OC Transpo)
 
 ### `KEY_API_AT_GOVT_NZ`
 

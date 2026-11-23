@@ -20,24 +20,28 @@ export function placeName(lat: number, lon: number): Promise<string | null> {
   const run = async (): Promise<string | null> => {
     cache ??= JSON.parse(await fs.readFile(file, 'utf8').catch(() => '{}'));
     if (cache![key]) return cache![key];
-    const wait = last + 1100 - Date.now();
-    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
-    last = Date.now();
+    // City level first; where that only finds the state (rural Australia), look closer.
     try {
-      const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}&zoom=10&accept-language=en`;
+    for (const zoom of [10, 12, 14]) {
+      const wait = last + 1100 - Date.now();
+      if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+      last = Date.now();
+      const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}&zoom=${zoom}&accept-language=en`;
       const res = await fetch(url, { headers: { 'User-Agent': config.userAgent }, signal: AbortSignal.timeout(15_000) });
       if (!res.ok) return null;
       const j = await res.json() as { name?: string; address?: Record<string, string> };
       const a = j.address ?? {};
-      // The settlement if there is one; for rural points the district. Never the state or country.
-      const name = a.city || a.town || a.village || a.municipality || a.suburb || a.city_district || a.county || a.state_district
+      // The settlement if there is one; never the state or country.
+      const name = a.city || a.town || a.village || a.municipality || a.suburb || a.locality || a.hamlet || a.city_district || a.county
         || (j.name && j.name !== a.state && j.name !== a.country ? j.name : null) || null;
       if (name) {
         cache![key] = name;
         await fs.mkdir(path.dirname(file), { recursive: true });
         await fs.writeFile(file, JSON.stringify(cache));
+        return name;
       }
-      return name;
+    }
+    return null;
     } catch { return null; }
   };
   const p = queue.then(run, run);

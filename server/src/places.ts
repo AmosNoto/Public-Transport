@@ -182,7 +182,8 @@ export class Places {
     }
     const entry: { places: Set<Place>; adapter: SourceAdapter | null } = { places: new Set([p]), adapter: null };
     this.sources.set(src.id, entry);
-    const h: FeedHealth = { feed: src.id, city: p.def.id, provider: src.provider ?? feed.agency, license, state: 'starting', vehicles: 0, polls: 0, failures: 0 };
+    // A source shared by regions is listed under the national place it belongs to.
+    const h: FeedHealth = { feed: src.id, city: p.def.splitFrom ?? p.def.id, provider: src.provider ?? feed.agency, license, state: 'starting', vehicles: 0, polls: 0, failures: 0 };
     this.health.set(src.id, h);
     if (FORCED.has(feed.id)) { h.state = 'timetable'; h.detail = 'forced to the timetable (FORCE_SCHEDULED)'; return; }
     let url = src.url;
@@ -443,7 +444,8 @@ export class Places {
     const base = p.def, used = new Set<string>(), defs: CityDef[] = [];
     for (const [i, r] of res.split.regions.entries()) {
       const name = (await placeName(r.center.lat, r.center.lon)) ?? `${base.name} ${i + 1}`;
-      let id = `${base.id}-${name.toLowerCase().normalize('NFD').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || i + 1}`;
+      const slug = name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/ø/g, 'o').replace(/æ/g, 'ae').replace(/ß/g, 'ss').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+      let id = `${base.id}-${slug || i + 1}`;
       while (used.has(id)) id += '-2';
       used.add(id);
       defs.push({

@@ -70,6 +70,8 @@ async function readCapped(res: Response, maxBytes: number): Promise<Buffer> {
 
 export async function fetchCached(url: string, file: string, maxAgeS: number, headers: Record<string, string> = {}, maxBytes = Infinity): Promise<Buffer> {
   const st = await fs.stat(file).catch(() => null);
+  // A file already downloaded (e.g. for regions split from it) is held to the same limit.
+  if (st && st.size > maxBytes) throw new TooLargeError(`timetable is ${(st.size / 1e6).toFixed(0)} MB, over the ${(maxBytes / 1e6).toFixed(0)} MB limit (MAX_STATIC_MB)`);
   if (st && Date.now() - st.mtimeMs < maxAgeS * 1000) return fs.readFile(file);
   try {
     const h: Record<string, string> = { 'User-Agent': config.userAgent, ...headers };
