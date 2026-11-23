@@ -240,6 +240,14 @@ export class Vehicles {
     return [P[lo * 4] + (P[hi * 4] - P[lo * 4]) * t, P[lo * 4 + 1] + (P[hi * 4 + 1] - P[lo * 4 + 1]) * t];
   }
 
+  /** Where one vehicle is drawn now (origin-relative), or null if it isn't on the map (or has faded). */
+  position(key: string, now: number): { x: number; y: number; route: number; scheduled: boolean } | null {
+    const s = this.slots.get(key);
+    if (!s || now - s.tF > FADE_START) return null;
+    const [x, y] = this.drawnAt(s, now);
+    return { x, y, route: s.route, scheduled: s.scheduled };
+  }
+
   /**
    * The visible vehicle nearest an origin-relative point, within `maxM` metres. `kx`, `ky`
    * convert relative units to metres there (R·cos φ for both, in Web Mercator).

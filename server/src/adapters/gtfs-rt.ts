@@ -4,6 +4,7 @@ import GtfsRealtimeBindings from 'gtfs-realtime-bindings';
 import { config } from '../config.ts';
 import type { VehicleFix } from '../types.ts';
 import type { AdapterContext, SourceAdapter } from './types.ts';
+import { ingest } from '../predictions.ts';
 
 const { FeedMessage, VehiclePosition } = GtfsRealtimeBindings.transit_realtime;
 const STOPPED_AT = VehiclePosition.VehicleStopStatus.STOPPED_AT;
@@ -54,6 +55,8 @@ export function gtfsRtAdapter(): SourceAdapter {
         failures = 0;
         const now = Date.now() / 1000;
         const headerTs = Number(msg.header.timestamp ?? 0) || now;
+        // Feeds that send predictions alongside positions: keep them for departures.
+        if (msg.entity.some((e) => e.tripUpdate)) ingest(ctx.feed.id, ctx.source.id, msg.entity, Math.min(now, headerTs));
         const fixes: VehicleFix[] = [];
         // Upcoming stops per trip, for vehicles reported by progress rather than position.
         const upcoming = new Map<string, [string, number][]>();

@@ -12,6 +12,8 @@ import { Theme, type ThemeMode } from './ui/theme.ts';
 import { Inspector } from './ui/inspect.ts';
 import { Tour } from './ui/tour.ts';
 import { TimeLapse } from './ui/timelapse.ts';
+import { NearMe } from './ui/nearby.ts';
+import { Follow } from './ui/follow.ts';
 
 /**
  * Start over the user's own longitude (from their time zone), with the whole globe in view.
@@ -130,7 +132,19 @@ async function main() {
     timelapse.start(f).then(() => { hint = ''; }, () => say('nothing recorded here yet'));
   };
   const prevTour = tour.onChange;
-  tour.onChange = (on) => { prevTour(on); if (on) timelapse.stop(); };
+  tour.onChange = (on) => { prevTour(on); if (on) { timelapse.stop(); nearMe.set(false); follow.stop(); } };
+
+  // Near me: fly to the viewer's location and list the next departures around them.
+  const nearMe = new NearMe(cam, cities, () => theme.look);
+  const nearBtn = document.getElementById('near-btn')!;
+  nearMe.onChange = (on) => { nearBtn.classList.toggle('on', on); nearBtn.setAttribute('aria-pressed', String(on)); if (on) { tour.stop(); timelapse.stop(); } };
+  nearBtn.onclick = () => nearMe.toggle();
+
+  // Follow your ride: pick a departure in "Near you" and the camera rides along with it.
+  const follow = new Follow(cam, cities, () => cities.clock());
+  nearMe.onPick = (ride) => { tour.stop(); timelapse.stop(); follow.start(ride); };
+  nearMe.onRetime = (t, live) => follow.retime(t, live);
+  follow.onChange = (ride) => { if (!ride) nearMe.unpick(); };
 
   let hudAt = 0;
   engine.onFrame((dt, now) => {
@@ -138,6 +152,8 @@ async function main() {
     timelapse.update(now);
     inspector.update(now);
     tour.update(dt, now);
+    nearMe.update();
+    follow.update(dt, now);
     u.uTime.value = timelapse.localNow();
     // The Earth grid is centred on the focus longitude; only its latitude offset moves.
     const eo = layerOffsets(cam.focus, cam.focus.lon * 180 / Math.PI, 0);
@@ -190,7 +206,7 @@ async function main() {
       ].join('\n');
     }, 500);
   }
-  (window as unknown as { afterglow: unknown }).afterglow = { engine, cam, cities, live, water, theme, inspector, tour, timelapse, THREE };
+  (window as unknown as { afterglow: unknown }).afterglow = { engine, cam, cities, live, water, theme, inspector, tour, timelapse, nearMe, follow, THREE };
 }
 
 main().catch((e) => console.error(e));
