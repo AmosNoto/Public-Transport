@@ -266,3 +266,28 @@ body.idle #nearby { opacity: 1; }
 #nearby .faint { color: var(--faint); }
 .nb-off .nb-route { opacity: 0.5; }
 .nb-off .nb-dest { color: var(--faint); }
+
+/* Departures can be picked to follow. */
+.nb-dep[data-k] { cursor: pointer; border-radius: 5px; margin: 0 -4px; padding: 1px 4px; }
+.nb-dep[data-k]:hover { background: var(--hover); }
+.nb-dep[data-k]:focus-visible { outline: 1px solid var(--muted); outline-offset: 0; }
+.nb-dep.nb-picked { background: var(--hover); box-shadow: inset 2px 0 0 var(--fg); }
+
+/* Follow your ride: bottom centre, like the time-lapse bar; stays visible when the UI fades. */
+#follow {
+  position: fixed; z-index: 3; left: 50%; transform: translateX(-50%);
+  bottom: max(16px, env(safe-area-inset-bottom, 0px)); width: min(420px, calc(100vw - 32px));
+  padding: 8px 10px 9px 12px; color: var(--muted); font-size: 12.5px;
+  display: grid; grid-template-columns: 1fr auto; align-items: center; column-gap: 10px;
+}
+#follow p { margin: 0; grid-column: 1; }
+.fw-title { display: flex; align-items: center; gap: 8px; color: var(--fg); min-width: 0; }
+.fw-dest { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.fw-row { margin-top: 4px !important; }
+.fw-btn { grid-column: 2; grid-row: 1 / span 2; padding: 4px 10px; border-radius: 5px; border: 1px solid var(--line-soft); color: var(--fg); }
+.fw-btn:hover { background: var(--hover); }
+.fw-btn:focus-visible { outline: 1px solid var(--muted); outline-offset: 1px; }
+body.idle #follow { opacity: 1; }
+@media (max-width: 1200px) { #follow { bottom: calc(max(16px, env(safe-area-inset-bottom, 0px)) + 46px); } }
+@media (max-width: 640px) { #follow { bottom: calc(max(16px, env(safe-area-inset-bottom, 0px)) + 70px); } }
+@media (max-width: 480px) { #follow { bottom: calc(max(16px, env(safe-area-inset-bottom, 0px)) + 128px); } }

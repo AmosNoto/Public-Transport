@@ -6,6 +6,7 @@ import type { GlobeCamera } from '../engine/camera.ts';
 import { D2R, R } from '../engine/geo.ts';
 import type { CityManager } from '../city/manager.ts';
 import type { Mode } from '../data/city.ts';
+import type { Ride } from './follow.ts';
 
 interface Dep {
   /** When it leaves: predicted if `rt` is 'live', else timetabled. */
@@ -45,6 +46,13 @@ export class NearMe {
   private timer = 0;
   private busy = false;
   private flown = false;
+  /** Departures as rendered, by row index (for picking one to follow). */
+  private rows: { s: Stop; d: Dep }[] = [];
+  /** The departure being followed (`feed:trip`), marked in the list. */
+  picked: string | null = null;
+  /** A departure was picked; and newer times for the picked one after a refresh. */
+  onPick: (ride: Ride) => void = () => {};
+  onRetime: (t: number, live: boolean) => void = () => {};
 
   constructor(private cam: GlobeCamera, private cities: CityManager, private look: () => 'dark' | 'light') {
     this.panel = document.createElement('section');
@@ -55,6 +63,22 @@ export class NearMe {
     this.panel.innerHTML = `<div class="nb-head"><p class="eyebrow">Near you</p><button class="nb-close" aria-label="Close">×</button></div><div class="nb-body" aria-live="polite"></div>`;
     this.body = this.panel.querySelector('.nb-body')!;
     (this.panel.querySelector('.nb-close') as HTMLElement).onclick = () => this.set(false);
+    // Pick a departure to follow: click, or Enter / Space on a focused row.
+    const pick = (el: EventTarget | null) => {
+      const row = (el as HTMLElement | null)?.closest<HTMLElement>('.nb-dep[data-k]');
+      const it = row ? this.rows[Number(row.dataset.k)] : undefined;
+      if (!it) return false;
+      this.picked = `${it.s.feed}:${it.d.trip}`;
+      this.onPick({
+        place: it.s.place, feed: it.s.feed, trip: it.d.trip, route: it.d.route, mode: it.d.mode,
+        label: it.d.short || it.d.long || MODE_LABEL[it.d.mode], dest: it.d.dest, colour: this.colour(it.s, it.d),
+        stopName: it.s.name, t: it.d.t, live: it.d.rt === 'live',
+      });
+      this.render();
+      return true;
+    };
+    this.body.addEventListener('click', (e) => { pick(e.target); });
+    this.body.addEventListener('keydown', (e) => { if ((e.key === 'Enter' || e.key === ' ') && pick(e.target)) e.preventDefault(); });
     document.body.appendChild(this.panel);
     this.marker = document.createElement('div');
     this.marker.id = 'here';
@@ -64,6 +88,9 @@ export class NearMe {
   }
 
   toggle() { this.set(!this.active); }
+
+  /** Nothing followed any more: clear the mark in the list. */
+  unpick() { this.picked = null; this.render(); }
 
   set(on: boolean) {
     if (on === this.active) { if (on) this.flyHome(); return; }
@@ -117,6 +144,8 @@ export class NearMe {
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       this.data = await r.json();
       this.fetchedAt = performance.now();
+      const p = this.picked && this.data!.stops.flatMap((s) => s.deps.map((d) => ({ s, d }))).find((x) => `${x.s.feed}:${x.d.trip}` === this.picked);
+      if (p) this.onRetime(p.d.t, p.d.rt === 'live');
       this.fetchedPos = at;
       this.render();
     } catch {
@@ -160,6 +189,7 @@ export class NearMe {
       g.distM = Math.min(g.distM, s.distM);
       for (const dep of s.deps) if (dep.t >= now - 30) g.items.push({ s, d: dep });
     }
+    this.rows = [];
     const rows = groups.slice(0, 5).map((g) => {
       g.items.sort((a, b) => a.d.t - b.d.t);
       const deps = g.items.slice(0, 5).map(({ s, d: dep }) => {
@@ -178,7 +208,11 @@ export class NearMe {
         } else {
           whenHtml = `<span title="Timetabled">${when(dep.t)}</span>`;
         }
-        return `<li class="nb-dep${dep.rt === 'cancelled' || dep.rt === 'skipped' ? ' nb-off' : ''}">
+        const off = dep.rt === 'cancelled' || dep.rt === 'skipped';
+        const k = off ? -1 : this.rows.push({ s, d: dep }) - 1;
+        const picked = this.picked === `${s.feed}:${dep.trip}`;
+        const attrs = off ? '' : ` data-k="${k}" tabindex="0" role="button" aria-pressed="${picked}" title="Follow this ${MODE_LABEL[dep.mode].toLowerCase()}"`;
+        return `<li class="nb-dep${off ? ' nb-off' : ''}${picked ? ' nb-picked' : ''}"${attrs}>
           <span class="nb-route" style="--c:${this.colour(s, dep)}" title="${esc(MODE_LABEL[dep.mode] + (dep.long && dep.short ? ' · ' + dep.long : ''))}">${esc(label)}</span>
           <span class="nb-dest"><span class="nb-to">${dest}</span>${note}</span>
           <span class="nb-when mono">${whenHtml}</span></li>`;

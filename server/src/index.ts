@@ -14,13 +14,13 @@ import { cityDefs } from './cities/index.ts';
 import { discover, CATALOG_ATTRIBUTION, type Discovery } from './catalog/mobilitydb.ts';
 import { readGlow, loadStops, type CityIndex } from './static/gtfs.ts';
 import { waterTile, BASEMAP_ATTRIBUTION, MAX_WATER_ZOOM } from './static/basemap.ts';
-import { toWire, LiveCity, type VehicleState } from './live.ts';
+import { toWire, LiveCity, FLAG_SCHEDULED, type VehicleState } from './live.ts';
 import { toRel } from './geo.ts';
 import { spectralHue, vivid } from './color.ts';
 import { GEONAMES_ATTRIBUTION } from './geonames.ts';
 import { Places, type Place } from './places.ts';
 import { nearby } from './nearby.ts';
-import { predictionHealth } from './predictions.ts';
+import { predictionHealth, tripIds } from './predictions.ts';
 
 function send(p: Place, msg: object) {
   if (!p.subscribers.size) return;
@@ -241,6 +241,26 @@ app.get<{ Params: { z: string; x: string; y: string } }>('/api/water/:z/:x/:y', 
   } catch (e) {
     return reply.code(502).send({ error: (e as Error).message });
   }
+});
+
+/**
+ * The vehicle on the map running a timetable trip (for "follow your ride"), live or placed from
+ * the timetable, or null when none is out yet. Matches the realtime ids feeds use for timetable
+ * trips (see tripIds). Only answers for a place someone is already watching.
+ */
+app.get<{ Params: { id: string }; Querystring: { feed?: string; trip?: string } }>('/api/city/:id/vehicle', async (req, reply) => {
+  const p = places.all.get(req.params.id);
+  const { feed, trip } = req.query;
+  if (!p || !feed || !trip) return reply.code(400).send({ error: 'place, feed and trip required' });
+  reply.header('Cache-Control', 'no-store');
+  if (!p.live) return { key: null, loaded: false };
+  const ids = new Set(tripIds(trip));
+  const all = [...p.live.vehicles.values(), ...p.fallbacks.flatMap((f) => [...f.shown.values()])];
+  const now = Date.now() / 1000;
+  const v = all
+    .filter((s) => s.key.startsWith(feed + ':') && s.tripId && ids.has(s.tripId) && now - s.ts < 180)
+    .sort((a, b) => (a.flags & FLAG_SCHEDULED) - (b.flags & FLAG_SCHEDULED) || b.ts - a.ts)[0]; // live first, freshest first
+  return { key: v?.key ?? null, loaded: true, scheduled: v ? (v.flags & FLAG_SCHEDULED) !== 0 : null };
 });
 
 /** Next departures from the stops around a point (the viewer's location; never stored or logged). */
