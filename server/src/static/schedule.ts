@@ -58,19 +58,19 @@ export function serviceBase(date: string, tz: string): number {
   return noon - 12 * 3600;
 }
 
-function shiftDate(date: string, days: number): string {
+export function shiftDate(date: string, days: number): string {
   const t = new Date(Date.UTC(+date.slice(0, 4), +date.slice(4, 6) - 1, +date.slice(6, 8)) + days * 86400000);
   return t.toISOString().slice(0, 10).replace(/-/g, '');
 }
 
 // ---------- parsing ----------
 
-const hms = (s: string) => {
+export const hms = (s: string) => {
   const m = /^\s*(\d+):(\d\d):(\d\d)/.exec(s);
   return m ? +m[1] * 3600 + +m[2] * 60 + +m[3] : NaN;
 };
 
-function activeServices(cal: Row[], dates: Row[], date: string): Set<string> {
+export function activeServices(cal: Row[], dates: Row[], date: string): Set<string> {
   const dow = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'][
     new Date(Date.UTC(+date.slice(0, 4), +date.slice(4, 6) - 1, +date.slice(6, 8))).getUTCDay()];
   const on = new Set<string>();

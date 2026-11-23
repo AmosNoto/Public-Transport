@@ -19,6 +19,8 @@ import { toRel } from './geo.ts';
 import { spectralHue, vivid } from './color.ts';
 import { GEONAMES_ATTRIBUTION } from './geonames.ts';
 import { Places, type Place } from './places.ts';
+import { nearby } from './nearby.ts';
+import { predictionHealth } from './predictions.ts';
 
 function send(p: Place, msg: object) {
   if (!p.subscribers.size) return;
@@ -241,6 +243,16 @@ app.get<{ Params: { z: string; x: string; y: string } }>('/api/water/:z/:x/:y', 
   }
 });
 
+/** Next departures from the stops around a point (the viewer's location; never stored or logged). */
+app.get<{ Querystring: { lat?: string; lon?: string } }>('/api/nearby', async (req, reply) => {
+  const lat = Number(req.query.lat), lon = Number(req.query.lon);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) {
+    return reply.code(400).send({ error: 'lat and lon required' });
+  }
+  reply.header('Cache-Control', 'no-store');
+  return nearby(places, lat, lon);
+});
+
 app.get('/api/health', async () => {
   const now = Date.now() / 1000;
   const mem = process.memoryUsage();
@@ -265,6 +277,7 @@ app.get('/api/health', async () => {
       const fb = p?.fallbacks.find((f) => f.feedId === h.feed || p.def.feeds.find((x) => x.id === f.feedId)?.realtime?.some((r) => r.id === h.feed));
       return { ...h, cityName: p?.def.name ?? h.city, mode: fb?.mode ?? (h.state === 'timetable' ? 'scheduled' : 'live'), scheduled: fb?.shown.size ?? 0 };
     }),
+    predictions: [...predictionHealth.values()],
     skipped: discovery?.skipped ?? [],
     keys: (discovery?.keyed ?? []).map((k) => ({ env: k.env, host: k.host, info: k.info ?? null, feeds: k.feeds.length, set: !!config.key(k.env) })),
   };

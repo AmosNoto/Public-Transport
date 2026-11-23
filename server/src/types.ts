@@ -39,6 +39,8 @@ export interface FeedDef {
   staticAlt?: string;
   /** Live positions; empty or absent means the feed is shown from its timetable. */
   realtime?: RealtimeDef[];
+  /** GTFS-RT TripUpdates published separately from positions: fetched on demand for departures. */
+  predictions?: RealtimeDef[];
   /** Refuse timetables larger than this (bytes); see MAX_STATIC_MB. */
   maxBytes?: number;
   /** Mobility Database ids (static and realtime) this feed covers, so discovery skips them. */

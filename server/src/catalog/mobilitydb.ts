@@ -92,7 +92,7 @@ export async function discover(covered: Set<string>, maxBytes: number): Promise<
 
   const skipped: SkippedFeed[] = [];
   const cities: CityDef[] = [];
-  const groups = new Map<string, { st: Row; rts: Row[] }>();
+  const groups = new Map<string, { st: Row; rts: Row[]; tus?: Row[] }>();
   for (const r of rows) {
     if (r.data_type !== 'gtfs-rt' || !r.entity_type.split('|').includes('vp') || isDead(r)) continue;
     const url = r['urls.direct_download'];
@@ -126,17 +126,25 @@ export async function discover(covered: Set<string>, maxBytes: number): Promise<
     if (!g) groups.set(st.mdb_source_id, (g = { st, rts: [] }));
     g.rts.push(r);
   }
-
+  // Predictions published as their own feed (trip updates without positions), for departures.
+  for (const r of rows) {
+    const kinds = r.data_type === 'gtfs-rt' ? r.entity_type.split('|') : [];
+    if (!kinds.includes('tu') || kinds.includes('vp') || isDead(r) || !r['urls.direct_download']) continue;
+    const st = r.static_reference.split('|').filter(Boolean).map(resolveStatic).find((x) => x);
+    const g = st && groups.get(st.mdb_source_id);
+    if (g) (g.tus ??= []).push(r);
+  }
 
   const providerCount = new Map<string, number>();
   for (const { st } of groups.values()) providerCount.set(st.provider, (providerCount.get(st.provider) ?? 0) + 1);
 
-  for (const { st, rts } of groups.values()) {
+  for (const { st, rts, tus } of groups.values()) {
     const sid = st.mdb_source_id;
     const cc = st['location.country_code'];
     const region = [st['location.municipality'], st['location.subdivision_name']].filter(Boolean).join(', ');
     const placeName = rts.length === 1 && rts[0].name ? rts[0].name : short(st.provider || rts[0].provider);
     const realtime: RealtimeDef[] = rts.map((r) => rtDef(r, region, cc));
+    const predictions = tus?.map((r) => rtDef(r, region, cc));
     const license = rts.map((r) => r['urls.license']).find(Boolean) || st['urls.license'] || null;
     const feed: FeedDef = {
       id: `s${sid}`,
@@ -144,6 +152,7 @@ export async function discover(covered: Set<string>, maxBytes: number): Promise<
       static: st['urls.latest'] || st['urls.direct_download'],
       staticAlt: st['urls.latest'] && st['urls.direct_download'] ? st['urls.direct_download'] : undefined,
       realtime,
+      predictions,
       maxBytes,
       mdb: [sid, ...rts.map((r) => r.mdb_source_id)],
       license: license ? { name: 'Licence', url: license } : { name: 'No licence listed in the catalog' },

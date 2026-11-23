@@ -24,6 +24,7 @@ import { FeedFallback, FORCED } from './fallback.ts';
 import { gtfsRtAdapter } from './adapters/gtfs-rt.ts';
 import { hslMqttAdapter } from './adapters/hsl-mqtt.ts';
 import type { SourceAdapter } from './adapters/types.ts';
+import { sourceRequest } from './adapters/request.ts';
 import type { CityDef, FeedDef, FeedHealth, RealtimeDef, RouteInfo, VehicleFix } from './types.ts';
 import { asInk, rgbToOklch, spectralHue, vivid } from './color.ts';
 
@@ -158,7 +159,11 @@ export class Places {
     if (saved) {
       p.state = 'skipped';
       p.error = `national timetable, shown as ${saved.length} regions`;
-      for (const r of saved) await this.add(r);
+      // Prediction feeds come from the current catalog, not the saved split (which may predate them).
+      for (const r of saved) {
+        r.feeds = r.feeds.map((f) => ({ ...f, predictions: def.feeds.find((x) => x.id === f.id)?.predictions }));
+        await this.add(r);
+      }
       return;
     }
     const s = def.positionsOnly ? null : await readSummary(def.id);
@@ -186,14 +191,9 @@ export class Places {
     const h: FeedHealth = { feed: src.id, city: p.def.splitFrom ?? p.def.id, provider: src.provider ?? feed.agency, license, state: 'starting', vehicles: 0, polls: 0, failures: 0 };
     this.health.set(src.id, h);
     if (FORCED.has(feed.id)) { h.state = 'timetable'; h.detail = 'forced to the timetable (FORCE_SCHEDULED)'; return; }
-    let url = src.url;
-    const headers: Record<string, string> = { ...src.headers };
-    if (src.key) {
-      const key = config.key(src.key.env);
-      if (!key) { h.state = 'no-key'; h.detail = `set ${src.key.env} to enable (see KEYS.md)`; return; }
-      if (src.key.param) { const u = new URL(url); u.searchParams.set(src.key.param, key); url = u.toString(); }
-      if (src.key.header) headers[src.key.header] = key;
-    }
+    const req = sourceRequest(src);
+    if (!req) { h.state = 'no-key'; h.detail = `set ${src.key!.env} to enable (see KEYS.md)`; return; }
+    const { url, headers } = req;
     const a = src.kind === 'hsl-mqtt' ? hslMqttAdapter() : gtfsRtAdapter();
     a.start({
       cityId: p.def.id, feed, source: src, url, headers,
